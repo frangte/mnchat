@@ -1,0 +1,31 @@
+services:
+  mysql:
+    image: mysql:9
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: mnchat
+      MYSQL_USER: mnchat
+      MYSQL_PASSWORD: mnchat
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: .
+    environment:
+      MYSQL_DSN: mnchat:mnchat@tcp(mysql:3306)/mnchat?parseTime=true&loc=UTC
+      JWT_SECRET: dev-secret-change-me
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql-data:

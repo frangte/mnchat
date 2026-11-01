@@ -77,6 +77,9 @@ docker-compose exec -T mysql-replica mysql -uroot -proot mnchat \
 - `gemma3:4b` can get details wrong. Read every seeded summary before the interview.
 - Summaries are empty on a fresh DB, so the demo must click [Summary] first.
 - Don't hold a DB transaction across the `SummarizeThread` call. It can take seconds.
+- `GET` returning 404 for "no summary yet" is the contract, and T09 treats it as a normal state.
+  Browsers still log it, once per thread opened. If that looks bad in the demo, changing it to
+  `200` with a null body is a small change in T07 and `ThreadSummary.tsx`.
 
 ## Resume notes
 

@@ -102,3 +102,7 @@ Choices the task left open:
   buttons, even though it sits right beside the input.
 - With a panel open at 768px or a little wider, the header input shrinks to a sliver, as the
   composer already does. It doesn't overflow.
+
+Merge check on 2026-11-01, with T08 and T09 combined: T09's suite passed 57 of 57, and T08's suite
+passed apart from 2 checks counting console 404s. Those were all `GET .../messages/1/summary`, which
+is how the contract says "no summary yet", so the suite's expectation predates T09. It isn't a bug.

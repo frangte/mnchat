@@ -82,6 +82,10 @@ Use `make load` from T13 for traffic if it's available.
 
 - Provision the datasource with a fixed `uid`, and reference it from the dashboards.
 - Histogram quantiles need `rate()` over a window longer than the 5 s scrape. Use `[1m]`.
+- `SearchBreakerOpen` can't use a plain `state == 2` with `for: 1m`. During a long outage the
+  breaker goes half-open every 10 s, and a scrape reading 1 resets the `for` timer, so the alert
+  may never fire. Use `max_over_time(mnchat_search_breaker_state[1m]) == 2`, and prove it fires
+  during a real outage longer than a few minutes.
 - Keep the panel count low. An interviewer looks at each one for a few seconds.
 
 ## Resume notes

@@ -37,7 +37,7 @@ Status values: `todo`, `in-progress`, `blocked`, `done`.
 | [T08](T08-search-ui.md) | Search input and results panel | S | in-progress | contract only |
 | [T09](T09-summary-ui.md) | Summary button and card in the thread panel | S | in-progress | contract only |
 | [T10](T10-observability-stack.md) | Prometheus, Grafana, exporters, `make up` | S | todo | T03, T04 |
-| [T11](T11-mock-interview.md) | Mock interview questions | S | in-progress | none |
+| [T11](T11-mock-interview.md) | Mock interview questions | S | done | none |
 | [T12](T12-dashboards-alerts.md) | Grafana dashboards and alert rules | M | todo | T01, T04, T05, T10 |
 | [T13](T13-chaos-load.md) | k6 load test and `make chaos-search` | M | todo | T04, T06, T10 |
 | [T14](T14-docs-demo-script.md) | Update docs, write ADRs and the demo script | S | todo | everything |

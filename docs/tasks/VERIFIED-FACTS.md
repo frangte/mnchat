@@ -15,6 +15,7 @@ removed afterwards, so nothing here exists in the repo yet.
 | 500 inserts on primary with replica up | 1.0–1.3 ms per insert |
 | 500 inserts on primary with replica killed | 0.9 ms per insert, so **no slowdown** |
 | Replica returns after missing 1,000 rows | Caught up automatically with no manual step |
+| Index present during the insert timings | An `ngram` `FULLTEXT` index on `body`, so the cost of maintaining an index is included. The real schema uses the default parser, which wasn't timed |
 | Semi-sync plugins | Not loaded by default. Keep it that way, because semi-sync would couple chat to the replica |
 | `binlog_expire_logs_seconds` default | 2592000 (30 days) |
 

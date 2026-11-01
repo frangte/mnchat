@@ -97,6 +97,10 @@ go test -tags integration ./internal/search/...
   and parse it, though that means adding it to the view contract.
 - `search_threads_v1` has no `summary` column on purpose. `api` loads text from the primary.
 - First call after idle takes about 4 s while the model loads. `keep_alive` keeps it warm.
+- **Cold embeds can break the first semantic search.** `SearchThreads` has a 2 s deadline from
+  chat, and the cold load time of `bge-m3` hasn't been measured. Set `keep_alive` on `/api/embed`
+  too, and measure a cold load. If it's over 2 s, make `search` warm the embed model at startup
+  without blocking on it, or the first query after idle returns 503 in the live demo.
 - Check `done_reason`. If it's `length`, the summary was cut off at `num_predict`.
 - Keep Ollama calls behind the request context, so a client deadline cancels them.
 

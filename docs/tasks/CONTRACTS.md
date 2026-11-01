@@ -190,7 +190,9 @@ All under `/api/v1`, bearer auth, using the existing error shape
 
 ### `GET /workspaces/:wsID/messages/:msgID/summary`
 
-Returns `200` with the object below, or `404` if there's no summary yet.
+Returns `200` with the object below, or `200` with a JSON `null` body if there's no summary
+yet, so the browser logs no error for each thread opened. `404` means the root is missing or
+the caller can't read its channel. A reply as `:msgID` returns `400`. Never calls `search`.
 
 ### `POST /workspaces/:wsID/messages/:msgID/summary`
 

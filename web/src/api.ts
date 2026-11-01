@@ -123,8 +123,9 @@ export const api = {
     request<List<Message>>('GET', `/workspaces/${wsId}/messages/${rootId}/replies?limit=100`).then(
       (r) => r.items,
     ),
+  // null means nobody has generated a summary yet. 404 means the thread is hidden or gone.
   summary: (wsId: number, rootId: number) =>
-    request<ThreadSummary>('GET', `/workspaces/${wsId}/messages/${rootId}/summary`),
+    request<ThreadSummary | null>('GET', `/workspaces/${wsId}/messages/${rootId}/summary`),
   summarize: (wsId: number, rootId: number) =>
     request<ThreadSummary>('POST', `/workspaces/${wsId}/messages/${rootId}/summary`),
   postMessage: (wsId: number, chId: number, body: string, threadRootId?: number) =>

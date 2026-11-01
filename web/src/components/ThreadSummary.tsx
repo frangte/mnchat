@@ -18,12 +18,8 @@ export function ThreadSummary({ workspaceId, rootId, replyCount }: Props) {
 
   const summary = useQuery({
     queryKey,
-    queryFn: () =>
-      api.summary(workspaceId, rootId).catch((err) => {
-        // 404 just means nobody has generated one yet.
-        if (err instanceof ApiError && err.status === 404) return null
-        throw err
-      }),
+    // A null body just means nobody has generated one yet. Errors, 404 included, are real.
+    queryFn: () => api.summary(workspaceId, rootId),
     enabled: replyCount >= MIN_REPLIES,
     retry: false,
   })

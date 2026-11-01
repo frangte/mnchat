@@ -11,7 +11,11 @@ import (
 	"github.com/frangte/mnchat/internal/domain"
 )
 
-const ctxUserID = "userID"
+const (
+	ctxUserID = "userID"
+
+	searchModeMessages = "messages"
+)
 
 func (h *Handler) requireAuth(c *gin.Context) {
 	token, ok := strings.CutPrefix(c.GetHeader("Authorization"), "Bearer ")
@@ -171,4 +175,25 @@ func (h *Handler) postMessage(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, msg)
+}
+
+// searchWorkspace passes c.Request.Context(), not c: gin.Context ignores cancellation
+// unless ContextWithFallback is set, and search must stop when the client leaves.
+func (h *Handler) searchWorkspace(c *gin.Context) {
+	wsID, ok := idParam(c, "wsID")
+	if !ok {
+		return
+	}
+	switch c.Query("mode") {
+	case "", searchModeMessages:
+		limit, _ := strconv.Atoi(c.Query("limit"))
+		items, err := h.search.Messages(c.Request.Context(), wsID, userID(c), c.Query("q"), limit)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"mode": searchModeMessages, "items": items})
+	default:
+		writeError(c, fmt.Errorf("%w: mode must be %s", domain.ErrInvalid, searchModeMessages))
+	}
 }

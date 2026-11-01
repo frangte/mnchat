@@ -38,6 +38,7 @@ type RequestMetrics interface {
 type Handler struct {
 	auth      *service.AuthService
 	chat      *service.ChatService
+	search    *service.SearchService
 	hub       *realtime.Hub
 	db        Pinger
 	wsOrigins []string
@@ -46,13 +47,14 @@ type Handler struct {
 func NewRouter(
 	auth *service.AuthService,
 	chat *service.ChatService,
+	search *service.SearchService,
 	hub *realtime.Hub,
 	db Pinger,
 	metrics RequestMetrics,
 	metricsHandler http.Handler,
 	wsOrigins []string,
 ) http.Handler {
-	h := &Handler{auth: auth, chat: chat, hub: hub, db: db, wsOrigins: wsOrigins}
+	h := &Handler{auth: auth, chat: chat, search: search, hub: hub, db: db, wsOrigins: wsOrigins}
 
 	r := gin.New()
 	// requestMetrics goes first so it still sees the 500 after Recovery handles a panic.
@@ -75,6 +77,7 @@ func NewRouter(
 	authed.GET("/workspaces/:wsID/channels/:chID/messages", h.listMessages)
 	authed.POST("/workspaces/:wsID/channels/:chID/messages", h.postMessage)
 	authed.GET("/workspaces/:wsID/messages/:msgID/replies", h.listReplies)
+	authed.GET("/workspaces/:wsID/search", h.searchWorkspace)
 	return r
 }
 

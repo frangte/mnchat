@@ -18,6 +18,7 @@ import (
 	"github.com/frangte/mnchat/internal/platform/metrics"
 	"github.com/frangte/mnchat/internal/realtime"
 	"github.com/frangte/mnchat/internal/repo"
+	"github.com/frangte/mnchat/internal/searchclient"
 	"github.com/frangte/mnchat/internal/service"
 )
 
@@ -47,13 +48,19 @@ func newAPICmd() *cobra.Command {
 
 			hub := realtime.NewHub(apiMetrics)
 			authSvc := service.NewAuthService(repo.NewUserRepo(db), cfg.JWTSecret)
-			chatSvc := service.NewChatService(
-				repo.NewWorkspaceRepo(db), repo.NewChannelRepo(db), repo.NewMessageRepo(db), hub, apiMetrics,
-			)
+			workspaces, channels, messages := repo.NewWorkspaceRepo(db), repo.NewChannelRepo(db), repo.NewMessageRepo(db)
+			chatSvc := service.NewChatService(workspaces, channels, messages, hub, apiMetrics)
+
+			searchClient, err := searchclient.New(cfg.SearchGRPCAddr, apiMetrics)
+			if err != nil {
+				return err
+			}
+			defer searchClient.Close()
+			searchSvc := service.NewSearchService(workspaces, channels, messages, searchClient)
 
 			srv := &http.Server{
 				Addr:              cfg.HTTPAddr,
-				Handler:           httpapi.NewRouter(authSvc, chatSvc, hub, db, apiMetrics, metrics.Handler(reg), cfg.WSOrigins),
+				Handler:           httpapi.NewRouter(authSvc, chatSvc, searchSvc, hub, db, apiMetrics, metrics.Handler(reg), cfg.WSOrigins),
 				ReadHeaderTimeout: 5 * time.Second,
 			}
 			go func() {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"slices"
+	"strings"
 
 	"github.com/frangte/mnchat/internal/domain"
 )
@@ -54,6 +55,27 @@ func (r *MessageRepo) Get(ctx context.Context, workspaceID, id int64) (domain.Me
 		return m, domain.ErrNotFound
 	}
 	return m, err
+}
+
+// GetMany returns the messages it finds, oldest first, leaving out any that are
+// missing, deleted or in another workspace.
+func (r *MessageRepo) GetMany(ctx context.Context, workspaceID int64, ids []int64) ([]domain.Message, error) {
+	if len(ids) == 0 {
+		return []domain.Message{}, nil // IN () is a syntax error
+	}
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, workspaceID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	rows, err := r.db.QueryContext(ctx, messageColumns+`
+		WHERE m.workspace_id = ? AND m.id IN (`+placeholders+`) AND m.deleted_at IS NULL
+		ORDER BY m.id DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	return collectNewestFirst(rows)
 }
 
 // Create inserts the message and, for a reply, bumps its root's reply_count.

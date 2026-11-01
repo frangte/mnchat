@@ -158,12 +158,18 @@ Defined in `proto/search/v1/search.proto`.
 |---|---|---|
 | `INVALID_ARGUMENT` | Bad request | `ErrInvalid`, 400 |
 | `NOT_FOUND` | Thread not on the replica yet | `ErrNotFound`, 404 |
-| `UNAVAILABLE`, `DEADLINE_EXCEEDED` | Replica or Ollama down, or slow | `ErrUnavailable`, 503 |
+| `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `RESOURCE_EXHAUSTED` | Replica or Ollama down, slow or overloaded | `ErrUnavailable`, 503 |
+| Anything else | `search` answered, but can't serve this request | `ErrUnavailable`, 503 |
 
 Only `UNAVAILABLE`, `DEADLINE_EXCEEDED` and `RESOURCE_EXHAUSTED` count as breaker failures.
+Any other code proves `search` answered, so it resets the failure count and can close a
+half-open breaker. A call whose caller went away counts as neither, so closing a tab can't
+open or close a breaker.
 
 **Breakers:** one per RPC, using `github.com/sony/gobreaker/v2`. Open after 5 consecutive
 failures, stay open 10 s. An open breaker returns `ErrUnavailable` without calling `search`.
+Half-open allows one probe at a time, and the rest are rejected as if open. A breaker only
+leaves open on a call, so with no search traffic the gauge stays at 2 after `search` returns.
 
 ## HTTP API
 
@@ -229,6 +235,11 @@ Use exactly these names, so T12 can build dashboards before everything is merged
 
 Exclude `/api/v1/ws` from `mnchat_http_request_duration_seconds`, because those requests
 last as long as the connection.
+
+For `mnchat_search_*`, `rpc` is `SearchMessages`, `SearchThreads` or `SummarizeThread`.
+`outcome` is `unavailable` for a breaker failure, `breaker_open` for a call the breaker
+rejected, and `error` for everything else that failed, including a caller going away. The
+duration histogram covers calls sent to `search`, so rejected calls can't flatter it.
 
 **search:**
 

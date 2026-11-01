@@ -56,7 +56,7 @@ func (f *fakeRequestMetrics) HTTPDuration(method, route string, _ time.Duration)
 // newTestRouter needs no chat or hub: every route under test stops at auth or
 // doesn't use them.
 func newTestRouter(db Pinger, m RequestMetrics, metricsHandler http.Handler) http.Handler {
-	return NewRouter(service.NewAuthService(nil, "test-secret"), nil, nil, db, m, metricsHandler, nil)
+	return NewRouter(service.NewAuthService(nil, "test-secret"), nil, nil, nil, db, m, metricsHandler, nil)
 }
 
 func serve(h http.Handler, method, target string) *httptest.ResponseRecorder {

@@ -69,6 +69,7 @@ docker stats --no-stream
 
 ## Gotchas
 
+- `api` already has `SEARCH_GRPC_ADDR: search:9190` in Compose, and `search` is already a service.
 - `.dockerignore` excludes `deploy/`, so mount those configs as volumes rather than `COPY` them.
 - Colima has 8 GB. Ollama doesn't count, since it runs on the Mac.
 - `api`'s `/metrics` needs T01. Until that's merged, the `api` target is `DOWN`, which is expected.

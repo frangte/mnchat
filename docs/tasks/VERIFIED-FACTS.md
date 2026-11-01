@@ -22,6 +22,22 @@ removed afterwards, so nothing here exists in the repo yet.
 Later confirmed in the real repo with T03: 50 chat posts over HTTP with the replica killed
 had zero errors, and it caught up with no manual step.
 
+### Full stack outage test
+
+Run on 2026-11-01 in Compose with real `api`, `search`, primary and replica. This is one laptop run
+with a small data set, and `make chaos-search` (T13) replaces it.
+
+| Event | Result |
+|---|---|
+| `docker-compose stop search`, then 30 chat posts | Zero errors, `readyz` stayed 200 |
+| Search calls while stopped | 503. First two about 810 ms, then 399 ms, then 2–5 ms once the breaker opened |
+| `docker-compose start search` | First 200 after 8.8 s, breaker closed, no chat restart |
+| `docker-compose stop mysql-replica`, then 30 chat posts | Zero errors, `readyz` stayed 200 |
+| Search calls while replica stopped | 503 at about 810 ms each, then 9 ms once the breaker opened |
+| `docker-compose start mysql-replica` | A message sent during the outage was searchable 9.6 s later |
+
+Permissions held end to end: Alice found both `reorganization` messages, and Carol and Dave found none.
+
 ## Views and grants
 
 | Check | Result |

@@ -104,7 +104,7 @@ Done. Every Acceptance item and Validate step was run on 2026-11-01: `make searc
   keeps its real words.
 - `grpc.reflection` is registered as well, which is what makes `grpcurl list` work.
 
-**The replica wasn't really stopped,** because it's shared. A closed port and a black-holed IP
+**Real stop confirmed at merge:** on 2026-11-01 a real `docker-compose stop mysql-replica` gave 503s and no chat errors, and search recovered on its own. Before that, during this task, the replica wasn't really stopped, because it's shared. A closed port and a black-holed IP
 covered startup and requests on the real binary. `TestRecoversWhenReplicaReturns` puts a proxy in
 front of the replica and cuts live pooled connections, then restores them. T13 should confirm a
 real `docker stop` of the replica.

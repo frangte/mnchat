@@ -106,3 +106,7 @@ Choices the task left open:
 Merge check on 2026-11-01, with T08 and T09 combined: T09's suite passed 57 of 57, and T08's suite
 passed apart from 2 checks counting console 404s. Those were all `GET .../messages/1/summary`, which
 is how the contract says "no summary yet", so the suite's expectation predates T09. It isn't a bug.
+
+Real backend check on 2026-11-01, after T04 and T06: a real hit rendered, a reply hit opened its real
+thread, a real 503 showed the unavailable message, and chat kept working in the browser. Real empty
+results come back as `[]`. The Threads tab still needs a real run after T07.

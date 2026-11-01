@@ -30,10 +30,10 @@ Status values: `todo`, `in-progress`, `blocked`, `done`.
 | [T01](T01-metrics.md) | Metrics package and chat instrumentation | S | done | T00 |
 | [T02](T02-private-ws-leak.md) | Fix private-channel WebSocket leak, seed private channel | S | done | none |
 | [T03](T03-mysql-replication.md) | MySQL replication, views, read-only user | M | done | none |
-| [T04](T04-search-service.md) | search-service with text search | M | in-progress | T00, T03 |
-| [T05](T05-summarize-semantic.md) | Thread summaries and semantic search with Ollama | M | todo | T04 |
-| [T06](T06-chat-search-endpoint.md) | Chat search endpoint, timeout, breaker | M | in-progress | T00 |
-| [T07](T07-chat-summary-endpoint.md) | Chat summary endpoints, thread results, seed threads | M | todo | T03, T06 |
+| [T04](T04-search-service.md) | search-service with text search | M | done | T00, T03 |
+| [T05](T05-summarize-semantic.md) | Thread summaries and semantic search with Ollama | M | in-progress | T04 |
+| [T06](T06-chat-search-endpoint.md) | Chat search endpoint, timeout, breaker | M | done | T00 |
+| [T07](T07-chat-summary-endpoint.md) | Chat summary endpoints, thread results, seed threads | M | in-progress | T03, T06 |
 | [T08](T08-search-ui.md) | Search input and results panel | S | done | contract only |
 | [T09](T09-summary-ui.md) | Summary button and card in the thread panel | S | blocked: owner VoiceOver check, re-test after T07 | contract only |
 | [T10](T10-observability-stack.md) | Prometheus, Grafana, exporters, `make up` | S | todo | T03, T04 |

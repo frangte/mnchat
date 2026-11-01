@@ -21,7 +21,7 @@ by meaning. The owner chose a user-triggered flow rather than a background job.
 1. Add to `api.ts`: a `ThreadSummary` type, `api.summary(wsId, rootId)` and
    `api.summarize(wsId, rootId)`.
 2. `ThreadSummary` receives `workspaceId`, `rootId`, `replyCount`.
-   - Query `['summary', rootId]`, with `retry: false`. A 404 means "no summary yet", not an error.
+   - Query `['summary', rootId]`, with `retry: false`. `GET` returns `200` with a `null` body when there's no summary yet, which is a normal state. A 404 means a hidden or missing root, and shows as an error.
      `ApiError` carries `status`.
    - Mutation `api.summarize`. On success, write the result to the query cache.
 3. Render between the root message and the replies divider in `ThreadPanel`.
@@ -81,11 +81,13 @@ and WebSocket events were real. With `search` down, the real path hasn't been ex
 **Verified for real:** threads under 3 replies match commit 8d283ad exactly, in markup and
 pixels, at 1280x800 and 390x780, on the same data.
 
-**Until T07 merges:** `GET` returns a plain-text 404, which correctly reads as no summary.
-`POST` also returns 404, so clicking `Summary` shows `Not Found` inline.
+**T07 merged (2026-11-01):** `GET` with no summary returns `200 null` (owner decision), so
+opening a thread logs nothing in the console. T07 changed `api.ts` (`ThreadSummary | null`) and
+`ThreadSummary.tsx` to match. The live API was checked end to end; the UI click-through and
+VoiceOver check are the owner's.
 
 **Design notes:**
-- 404 becomes `null` in the query function, so "no summary" is a success state.
+- A `null` body is "no summary yet", a success state. A 404 now means the root is hidden or gone.
 - `onSuccess` cancels queries before writing, because a slower `GET` would overwrite the result.
 - `useIsMutating` plus a synchronous `isMutating` check stops double-submits. `disabled` alone
   doesn't, because React Query notifies through `setTimeout(0)`: a plain double click sent two

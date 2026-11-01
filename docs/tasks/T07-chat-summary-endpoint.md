@@ -1,6 +1,6 @@
 # T07: Chat summary endpoints, thread results, seed threads
 
-**Status:** in-progress · **Size:** M · **Depends on:** T03, T06 · **Works end to end with:** T05
+**Status:** done · **Size:** M · **Depends on:** T03, T06 · **Works end to end with:** T05
 
 ## Goal
 
@@ -49,8 +49,8 @@ reaches the replica through normal replication, which is what makes the thread s
 
 ## Acceptance
 
-- [ ] Clicking through the flow stores one row, and a second `POST` doesn't call `search`.
-      *Passes with fakes and over HTTP with a fake gRPC search. Click through in the main tree.*
+- [x] Clicking through the flow stores one row, and a second `POST` doesn't call `search`.
+      *Live: second `POST` in 5 ms, search's `SummarizeThread` counter unchanged.*
 - [x] After a new reply, `GET` shows `stale: true`, and `POST` regenerates. *(fakes)*
 - [x] A summary is still returned with `search` down, if it's cached. *(fakes, and over HTTP
       with a closed search port)*
@@ -59,13 +59,12 @@ reaches the replica through normal replication, which is what makes the thread s
 - [x] A thread with 2 replies returns 400. A reply as `:msgID` returns 400. *(fakes, over HTTP)*
 - [x] A caller who can't read the channel gets 404 on `GET` and `POST`, and no `search` call.
       *(fakes, over HTTP; the hidden thread's summary isn't even read)*
-- [ ] `mode=threads` finds a thread by meaning, for example `why did the website go down`
-      finding the deploy thread. *Needs T05 and Ollama, in the main tree.*
-- [ ] Carol never gets the `#leadership` thread, even with a query matching it closely.
-      *Filtering passes with fakes. Check end to end in the main tree.*
-- [ ] The row appears on the replica, and `embedding` has 1024 dims. *`Upsert` wrote 1024
-      dims on the primary in a rolled-back transaction, bit for bit. Check the replica in the
-      main tree.*
+- [x] `mode=threads` finds a thread by meaning, for example `why did the website go down`
+      finding the deploy thread. *Live: 5 of 5 topic queries ranked the right thread first.*
+- [x] Carol never gets the `#leadership` thread, even with a query matching it closely.
+      *Live: 5 queries as Carol, including the restructuring one, never returned it.*
+- [x] The row appears on the replica, and `embedding` has 1024 dims. *Live: 6 rows on the
+      replica, `VECTOR_DIM` 1024 each.*
 - [x] Service tests with fakes cover all of these branches.
 
 ## Validate
@@ -132,7 +131,14 @@ not `404`. CONTRACTS.md, `web/src/api.ts` (`ThreadSummary | null`) and `ThreadSu
 (a 404 is now an error, not "no summary") changed with it. `T09-summary-ui.md` still
 describes the old 404 behavior, and `README.md` still needs the decision recorded.
 
-Left for the main tree, after merging T05:
+**2026-11-01, main tree, after merging T05: done.** All the end-to-end checks below passed
+against Compose `api` and `search`, real Ollama and the replica. VERIFIED-FACTS.md, "Round 3
+end to end", has the numbers. `TestLatestReplyIDs` ran too, as part of
+`go test -tags integration ./internal/repo/...`, and cleaned up after itself. The one store test
+that broke, `TestFindsText`, assumed no seeded row says "rollback"; `00006` has one, so its
+single-word cases now use the fixture-only word "kestrel".
+
+The original checklist, kept for reference:
 - `make db`, `make search`, `make api` (applies `00006`), then click through: POST once,
   POST again with no `search` call, add a reply, GET shows `stale: true`, POST regenerates.
 - Stop `search`: a cached GET and POST still work, and an uncached POST returns 503.

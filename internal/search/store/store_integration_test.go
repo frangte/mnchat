@@ -179,9 +179,11 @@ func TestFindsText(t *testing.T) {
 		text string
 		want []string
 	}{
-		{name: "word", text: "rollback", want: []string{"rollback"}},
-		{name: "case does not matter", text: "ROLLBACK", want: []string{"rollback"}},
-		{name: "prefix", text: "roll", want: []string{"rollback"}},
+		// Single words use "kestrel", which only fixtures contain: the demo seed has a
+		// real rollback thread, so "rollback" alone also finds seeded rows.
+		{name: "word", text: "kestrel", want: []string{"deployed", "howto", "rollback", "snake"}},
+		{name: "case does not matter", text: "KESTREL", want: []string{"deployed", "howto", "rollback", "snake"}},
+		{name: "prefix", text: "kestr", want: []string{"deployed", "howto", "rollback", "snake"}},
 		{name: "both words required", text: "kestrel rollback", want: []string{"rollback"}},
 		{name: "second word missing from every row", text: "kestrel zebrafish", want: []string{}},
 		{name: "words in different rows", text: "rollback gateway", want: []string{}},
@@ -322,7 +324,7 @@ func TestBooleanOperatorsHaveNoEffect(t *testing.T) {
 	}
 
 	// The search above still sees the table.
-	if got := search(t, workspace1, publicChannels, "rollback"); !slices.Equal(got, []string{"rollback"}) {
+	if got := search(t, workspace1, publicChannels, "kestrel rollback"); !slices.Equal(got, []string{"rollback"}) {
 		t.Fatalf("after the injection attempts, search = %v", got)
 	}
 }

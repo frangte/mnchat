@@ -253,6 +253,9 @@ duration histogram covers calls sent to `search`, so rejected calls can't flatte
 | `mnchat_ai_duration_seconds` | histogram | `op` |
 | `mnchat_ai_tokens_total` | counter | `direction` = `input`, `output` |
 
+`mnchat_ai_tokens_total` counts summary tokens only, from `prompt_eval_count` and `eval_count`.
+Embedding input isn't counted, since the metric has no `op` label to keep the two apart.
+
 `rpc` is the method name, such as `SearchMessages`. `code` is the Go name of the gRPC code:
 `OK`, `InvalidArgument`, `NotFound`, `Unavailable`, `DeadlineExceeded`, `Canceled`, `Unimplemented`.
 Health checks aren't counted.

@@ -7,7 +7,7 @@ it can run in its own session and be resumed with little context.
 
 Paste this into a new session:
 
-> Read `docs/tasks/README.md`, `docs/tasks/CONTRACTS.md` and `docs/tasks/T03-mysql-replication.md`, then do that task.
+> Read `docs/tasks/README.md`, `docs/tasks/CONTRACTS.md` and `docs/tasks/T10-observability-stack.md`, then do that task.
 
 Rules for whoever picks up a task:
 
@@ -31,11 +31,11 @@ Status values: `todo`, `in-progress`, `blocked`, `done`.
 | [T02](T02-private-ws-leak.md) | Fix private-channel WebSocket leak, seed private channel | S | done | none |
 | [T03](T03-mysql-replication.md) | MySQL replication, views, read-only user | M | done | none |
 | [T04](T04-search-service.md) | search-service with text search | M | done | T00, T03 |
-| [T05](T05-summarize-semantic.md) | Thread summaries and semantic search with Ollama | M | in-progress | T04 |
+| [T05](T05-summarize-semantic.md) | Thread summaries and semantic search with Ollama | M | done | T04 |
 | [T06](T06-chat-search-endpoint.md) | Chat search endpoint, timeout, breaker | M | done | T00 |
-| [T07](T07-chat-summary-endpoint.md) | Chat summary endpoints, thread results, seed threads | M | in-progress | T03, T06 |
+| [T07](T07-chat-summary-endpoint.md) | Chat summary endpoints, thread results, seed threads | M | done | T03, T06 |
 | [T08](T08-search-ui.md) | Search input and results panel | S | done | contract only |
-| [T09](T09-summary-ui.md) | Summary button and card in the thread panel | S | blocked: owner VoiceOver check, re-test after T07 | contract only |
+| [T09](T09-summary-ui.md) | Summary button and card in the thread panel | S | blocked: owner VoiceOver check and UI click-through with T07 live | contract only |
 | [T10](T10-observability-stack.md) | Prometheus, Grafana, exporters, `make up` | S | todo | T03, T04 |
 | [T11](T11-mock-interview.md) | Mock interview questions | S | done | none |
 | [T12](T12-dashboards-alerts.md) | Grafana dashboards and alert rules | M | todo | T01, T04, T05, T10 |
@@ -86,6 +86,7 @@ These came from the owner on 2026-11-01. Don't reopen them without asking.
 | Local data | `make reset-db` may wipe the local DB, which holds seed data only. The owner approved this. |
 | Deploy | Compose only. Helm and minikube are out of scope. |
 | Mock interview | Questions an ANDPAD interviewer would ask, with answer notes based on this project. |
+| No summary yet | `GET .../summary` returns `200` with a `null` body, not `404`, so the browser logs no error per thread opened. `404` stays for a hidden or missing root. |
 
 ## Environment
 

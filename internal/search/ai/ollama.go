@@ -16,10 +16,13 @@ import (
 )
 
 const (
-	// keepAlive keeps both models loaded between requests. A cold summary model
-	// adds about 4 s, and a cold embedding model 1-2 s, which is most of chat's
-	// 2 s SearchThreads deadline.
-	keepAlive = "30m"
+	// chatKeepAlive keeps the summary model loaded between requests. A cold load
+	// adds about 4 s, well inside chat's 60 s SummarizeThread deadline.
+	chatKeepAlive = "30m"
+	// embedKeepAlive is longer, because a cold embedding model took 1.1-2.2 s to
+	// load, and chat's SearchThreads deadline is 2 s: after 30 idle minutes, as in
+	// a demo, the first semantic search would return 503. bge-m3 holds ~1.2 GB.
+	embedKeepAlive = "24h"
 
 	temperature = 0.2
 	// numPredict caps a summary at 300 tokens, far more than 2-3 sentences need.
@@ -109,7 +112,7 @@ func (o *Ollama) summarize(ctx context.Context, thread string) (string, Usage, e
 			{Role: "system", Content: SystemPrompt},
 			{Role: "user", Content: "<thread>\n" + threadTag.ReplaceAllString(thread, "[thread]") + "\n</thread>"},
 		},
-		KeepAlive: keepAlive,
+		KeepAlive: chatKeepAlive,
 		Options:   chatOptions{Temperature: temperature, NumPredict: numPredict},
 	}
 	var resp chatResponse
@@ -177,7 +180,7 @@ func (o *Ollama) WarmUp(ctx context.Context) error {
 
 func (o *Ollama) embed(ctx context.Context, text string) ([]float32, error) {
 	var resp embedResponse
-	err := o.post(ctx, "/api/embed", embedRequest{Model: o.embedModel, Input: text, KeepAlive: keepAlive}, &resp)
+	err := o.post(ctx, "/api/embed", embedRequest{Model: o.embedModel, Input: text, KeepAlive: embedKeepAlive}, &resp)
 	if err != nil {
 		return nil, err
 	}

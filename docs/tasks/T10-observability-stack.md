@@ -1,6 +1,6 @@
 # T10: Prometheus, Grafana, exporters, `make up`
 
-**Status:** todo · **Size:** S · **Depends on:** T03, T04 · **Blocks:** T12, T13
+**Status:** in-progress · **Size:** S · **Depends on:** T03, T04 · **Blocks:** T12, T13
 
 ## Goal
 
@@ -50,13 +50,20 @@ No tracing and no OpenTelemetry.
 
 ## Acceptance
 
-- [ ] `make up` from a clean state brings everything up without manual steps.
-- [ ] Prometheus `/targets` shows all 4 targets `UP`.
-- [ ] The replica lag metric exists and its name is written in CONTRACTS.md.
-- [ ] Grafana opens at `localhost:3000` with no login and has the datasource.
-- [ ] Stopping `search` turns only that target `DOWN`, and chat keeps working.
-- [ ] Stopping Prometheus or Grafana doesn't affect chat.
-- [ ] Total RAM is under about 2.5 GB, checked with `docker stats --no-stream`.
+- [ ] `make up` from a clean state brings everything up without manual steps. *The monitoring
+      containers and an empty Prometheus volume came up with no manual step. The full wipe,
+      `make reset-db && make up`, was refused by the session's permission classifier, so the
+      owner runs it.*
+- [x] Prometheus `/targets` shows all 4 targets `UP`. *api, search, mysql primary, mysql replica.*
+- [x] The replica lag metric exists and its name is written in CONTRACTS.md.
+- [x] Grafana opens at `localhost:3000` with no login and has the datasource. *Home 200 with no
+      redirect, and an anonymous query through the datasource returned `count(up==1)` = 4.*
+- [x] Stopping `search` turns only that target `DOWN`, and chat keeps working. *readyz and
+      messages 200.*
+- [x] Stopping Prometheus or Grafana doesn't affect chat. *readyz and messages 200.*
+- [x] Total RAM is under about 2.5 GB, checked with `docker stats --no-stream`. *About 1.2 GB
+      for the MNChat containers: both MySQL servers about 0.98 GB, Grafana 113 MB, Prometheus
+      42 MB, the rest under 11 MB each.*
 
 ## Validate
 
@@ -79,4 +86,23 @@ docker stats --no-stream
 
 ## Resume notes
 
-Not started.
+**2026-11-01, main tree.** Done apart from the clean-state box, which needs the owner to run
+`make reset-db && make up`.
+
+- **Images:** `prom/prometheus:v3.15.0`, `grafana/grafana:12.4.13`, `prom/mysqld-exporter:v0.20.0`,
+  each released at least two weeks earlier. Grafana stays on 12.x, whose classic dashboard JSON
+  and provisioning T12 relies on.
+- **Exporters:** credentials go in through `--mysqld.address`, `--mysqld.username` and
+  `MYSQLD_EXPORTER_PASSWORD`, so there's no `.my.cnf` to mount. The replica's exporter adds
+  `--collect.slave_status`. Neither has published ports or `depends_on`: they reconnect on each
+  scrape.
+- **Replication metrics** are in CONTRACTS.md. They vanish when the replica is down, while
+  `mysql_up{role="replica"}` drops to 0. Both were seen by stopping the replica.
+- **Prometheus** mounts the whole `deploy/observability/prometheus/` directory at
+  `/etc/prometheus`, so T12's `rules/` is already inside. `--web.enable-lifecycle` lets T12
+  reload rules with `curl -X POST localhost:9090/-/reload`. Retention is 7 days or 1 GB, since
+  the disk is tight.
+- **Grafana** is stateless, with no volume. The datasource has a fixed `uid: prometheus`, and
+  dashboards load from `/etc/grafana/dashboards` into the MNChat folder. An empty
+  `provisioning/alerting/` keeps a startup error out of the logs.
+- `make up` runs `docker-compose up -d --build` and prints the URLs. `make web` stays separate.

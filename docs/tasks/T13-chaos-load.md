@@ -1,6 +1,6 @@
 # T13: k6 load test and `make chaos-search`
 
-**Status:** todo · **Size:** M · **Depends on:** T04, T06, T10 · **Blocks:** T14
+**Status:** in-progress · **Size:** M · **Depends on:** T04, T06, T10 · **Blocks:** T14
 
 ## Goal
 
@@ -41,13 +41,23 @@ claim into a repeatable result that can run live in the interview.
 
 ## Acceptance
 
-- [ ] `make chaos-search` passes with zero chat errors across the outage.
-- [ ] The marker sent during the outage is searchable after recovery.
-- [ ] A deliberately broken setup fails the test. Prove it by making `api` depend on `search`
-      temporarily, then revert.
-- [ ] The script restores `search` and the replica even if it fails partway, using `trap`.
-- [ ] Grafana shows the outage and recovery clearly during the run.
-- [ ] It's safe to run repeatedly, and test data stays identifiable by a prefix.
+- [x] `make chaos-search` passes with zero chat errors across the outage. *Default run: 0% chat
+      failures, p95 22.6 ms. Long run, with search down 3 min 15 s and the replica 85 s: 0%, p95
+      23.3 ms.*
+- [x] The marker sent during the outage is searchable after recovery. *Found by the time k6 ended,
+      in both runs.*
+- [x] A deliberately broken setup fails the test. Prove it by making `api` depend on `search`
+      temporarily, then revert. *`postMessage` temporarily ran a search first: 32% of chat
+      requests failed, the outage post got 503, and the script exited 1. Reverted, and
+      `git diff` on `handlers.go` is empty.*
+- [x] The script restores `search` and the replica even if it fails partway, using `trap`. *The
+      first run died at step 7 and the trap brought both back. It also exposed a leftover k6
+      container, so k6 now runs with a per-run name that the trap removes.*
+- [ ] Grafana shows the outage and recovery clearly during the run. *The panel data was checked
+      through Prometheus during the run, see T12. Nobody has looked at it yet: no browser was
+      available to the session.*
+- [x] It's safe to run repeatedly, and test data stays identifiable by a prefix. *Run 5 times.
+      Everything goes to `#load-test`, with `load-test` bodies and `loadtest…<epoch>` markers.*
 
 ## Validate
 
@@ -67,4 +77,19 @@ make chaos-search; echo "exit=$?"
 
 ## Resume notes
 
-Not started.
+**2026-11-01, main tree.** Done apart from watching Grafana during a run, which is the owner's.
+
+- `deploy/load/chat.js` uses k6's built-in `scenario` tag rather than a custom `group` tag,
+  since k6 reserves `group` for `group()` blocks. Thresholds are on `{scenario:chat}`. Search has
+  an always-passing threshold, only so the summary shows its failure rate.
+- k6 `setup()` creates `#load-test`, or reuses it on a 409, and logs in the 4 Acme demo users.
+  Posting to a public channel joins it, so all of them can post.
+- `scripts/chaos-search.sh` follows the 11 steps. Timings come from `SEARCH_DOWN_AT`,
+  `REPLICA_DOWN_AT`, `RESTORE_AT` and `LOAD_SECONDS`, defaulting to 15, 30, 45 and 60. It needs
+  `jq`, and checks for it first.
+- **Two bash pitfalls, both fixed:**
+  - `read` returns 1 at end of input when the last line has no newline, which `set -e` turned
+    into a silent exit. An `ERR` trap now names the failing line.
+  - Killing `docker-compose run` doesn't stop its container. The trap now removes the k6
+    container by name.
+- The `k6` service sits under `profiles: [load]`, so `make up` never starts it.

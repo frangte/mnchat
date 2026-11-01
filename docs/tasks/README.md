@@ -7,7 +7,7 @@ it can run in its own session and be resumed with little context.
 
 Paste this into a new session:
 
-> Read `docs/tasks/README.md`, `docs/tasks/CONTRACTS.md` and `docs/tasks/T10-observability-stack.md`, then do that task.
+> Read `docs/tasks/README.md`, `docs/tasks/CONTRACTS.md` and `docs/tasks/T14-docs-demo-script.md`, then do that task.
 
 Rules for whoever picks up a task:
 
@@ -36,10 +36,10 @@ Status values: `todo`, `in-progress`, `blocked`, `done`.
 | [T07](T07-chat-summary-endpoint.md) | Chat summary endpoints, thread results, seed threads | M | done | T03, T06 |
 | [T08](T08-search-ui.md) | Search input and results panel | S | done | contract only |
 | [T09](T09-summary-ui.md) | Summary button and card in the thread panel | S | blocked: owner VoiceOver check and UI click-through with T07 live | contract only |
-| [T10](T10-observability-stack.md) | Prometheus, Grafana, exporters, `make up` | S | todo | T03, T04 |
+| [T10](T10-observability-stack.md) | Prometheus, Grafana, exporters, `make up` | S | blocked: owner runs `make reset-db && make up` for the clean-start check | T03, T04 |
 | [T11](T11-mock-interview.md) | Mock interview questions | S | done | none |
-| [T12](T12-dashboards-alerts.md) | Grafana dashboards and alert rules | M | todo | T01, T04, T05, T10 |
-| [T13](T13-chaos-load.md) | k6 load test and `make chaos-search` | M | todo | T04, T06, T10 |
+| [T12](T12-dashboards-alerts.md) | Grafana dashboards and alert rules | M | blocked: owner checks the dashboards on screen | T01, T04, T05, T10 |
+| [T13](T13-chaos-load.md) | k6 load test and `make chaos-search` | M | blocked: owner watches Grafana during one run | T04, T06, T10 |
 | [T14](T14-docs-demo-script.md) | Update docs, write ADRs and the demo script | S | todo | everything |
 
 ## Suggested order

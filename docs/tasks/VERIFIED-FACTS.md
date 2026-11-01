@@ -249,3 +249,47 @@ it either way, which makes a good demo contrast.
 
 Quitting the Ollama app through AppleScript failed with "User canceled (-128)", so a real Ollama
 stop wasn't run. From `search`'s side, a closed port fails the same way.
+
+## Monitoring and chaos (T10, T12, T13)
+
+Run on 2026-11-01 with `prom/prometheus:v3.15.0`, `grafana/grafana:12.4.13`,
+`prom/mysqld-exporter:v0.20.0` and `grafana/k6:1.8.1`.
+
+### Stack
+
+| Check | Result |
+|---|---|
+| Prometheus targets | api, search, mysql primary, mysql replica: all `UP` |
+| Replication metrics on MySQL 9.7 | `mysql_slave_status_seconds_behind_source`, `..._replica_io_running`, `..._replica_sql_running`. The prefix still says `slave` |
+| Replica stopped | Those three vanish, and `mysql_up{role="replica"}` drops to 0 |
+| `search` stopped | Only its target goes `DOWN`. readyz and messages stay 200 |
+| Prometheus and Grafana stopped | Chat unaffected |
+| RAM for the MNChat containers | About 1.2 GB: MySQL servers 0.98 GB, Grafana 113 MB, Prometheus 42 MB, the rest under 11 MB each |
+| Grafana without login | Home page 200, opens on MNChat Overview. Anonymous Viewer can query the datasource |
+
+### `make chaos-search`
+
+| Run | Chat result | Other |
+|---|---|---|
+| Default: search down at 15 s, replica killed at 30 s, both back at 45 s, 60 s of load | 0% failed, p95 22.6 ms | Search 503 in 3 ms with its breaker open. Outage marker searchable by the time k6 ended |
+| Long: search down 3 min 15 s, replica 85 s, 270 s of load | 0% failed, p95 23.3 ms. Chat 5xx share 0 on every sample, highest p95 65 ms | Search scenario 76.7% failed, as expected |
+| Broken on purpose: `postMessage` ran a search first | **32% of chat requests failed**, the outage post got 503, exit 1 | Proves the test catches coupling. Reverted |
+
+Alert timing in the long run:
+
+| Alert | Fired after |
+|---|---|
+| `SearchBreakerOpen` | 68 s of search outage |
+| `SearchServiceDown` | 73 s |
+| `ReplicationStopped` | 74 s of replica outage |
+| `ChatHighErrorRate`, `ChatHighLatency` | Never even pending |
+
+All alerts resolved within about a minute of recovery. A default 60 s run is too short for any
+of them to fire.
+
+### Embedding warm-up
+
+During the first three chaos runs, `search`'s startup warm-up timed out after its full 30 s each
+time, and one later embed took 2–3 s. Reproducing the same restarts afterwards, plain or with
+the replica killed, warmed in 52–60 ms. The cause isn't confirmed. Ollama stalling while the Mac
+was idle would fit. The warm-up now retries every 10 s for 5 minutes.

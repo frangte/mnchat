@@ -238,6 +238,10 @@ Use exactly these names, so T12 can build dashboards before everything is merged
 Exclude `/api/v1/ws` from `mnchat_http_request_duration_seconds`, because those requests
 last as long as the connection.
 
+**Chat routes**, for every chat panel and alert: `route!~"/api/v1/ws|.*/search|.*/summary"`.
+Search and summary routes are left out, because both return 503 while `search` is down, and
+chat must read as healthy through a search outage.
+
 For `mnchat_search_*`, `rpc` is `SearchMessages`, `SearchThreads` or `SummarizeThread`.
 `outcome` is `unavailable` for a breaker failure, `breaker_open` for a call the breaker
 rejected, and `error` for everything else that failed, including a caller going away. The
@@ -260,8 +264,18 @@ Embedding input isn't counted, since the metric has no `op` label to keep the tw
 `OK`, `InvalidArgument`, `NotFound`, `Unavailable`, `DeadlineExceeded`, `Canceled`, `Unimplemented`.
 Health checks aren't counted.
 
-**Replication:** from `mysqld-exporter`. T10 records the exact metric name here, because it
-varies by exporter version.
+**Replication:** from `mysqld-exporter` `v0.20.0` on MySQL 9.7, verified by T10. The prefix
+still says `slave`, while the column parts use MySQL's new names. Only the replica's exporter
+exports them, with `job="mysql", role="replica"`.
+
+| Metric | Meaning |
+|---|---|
+| `mysql_slave_status_seconds_behind_source` | Replica lag in seconds |
+| `mysql_slave_status_replica_io_running` | 1 while the IO thread, which fetches from the primary, runs |
+| `mysql_slave_status_replica_sql_running` | 1 while the SQL thread, which applies changes, runs |
+| `mysql_up{role="replica"}` | 0 when the exporter can't reach the replica at all. The three above vanish then |
+
+Alert on a missing series too, with `absent()` or `or`, since a dead replica exports nothing.
 
 ## Web
 

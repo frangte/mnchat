@@ -1,6 +1,6 @@
 # T07: Chat summary endpoints, thread results, seed threads
 
-**Status:** todo · **Size:** M · **Depends on:** T03, T06 · **Works end to end with:** T05
+**Status:** in-progress · **Size:** M · **Depends on:** T03, T06 · **Works end to end with:** T05
 
 ## Goal
 
@@ -25,14 +25,16 @@ reaches the replica through normal replication, which is what makes the thread s
 2. `repo/summary.go`:
    - `Get(ctx, workspaceID, rootID)`
    - `GetMany(ctx, workspaceID, rootIDs)`
-   - `Upsert(ctx, s, embedding []float32)`, writing with `STRING_TO_VECTOR(?)` and a
-     JSON-style `[0.1,0.2]` string.
+   - `Upsert(ctx, s, embedding []float32)`, binding the embedding as raw bytes: 4,096 bytes,
+     each float32 little-endian. Not `STRING_TO_VECTOR`, which rejects subnormal floats with
+     error 6138. Reject anything but 1024 finite values before writing.
 3. Add `MessageRepo.LatestReplyID(ctx, workspaceID, rootID)`.
 4. `service/summary.go`, shared access check, in this order:
    1. Member check, then load the root with `messages.Get`.
    2. `channels.GetVisible` on the root's channel. Failures return `ErrNotFound`.
    3. The root must be top-level, otherwise `ErrInvalid`.
-5. `GET`: return the summary with `Stale` set from `LatestReplyID`, or `ErrNotFound`.
+5. `GET`: return the summary with `Stale` set from `LatestReplyID`, or `nil` when there's none
+   yet, which the handler sends as `200` with a `null` body.
 6. `POST`:
    1. `reply_count < 3` returns `ErrInvalid` with a clear message.
    2. If a stored summary covers `LatestReplyID`, return it without calling `search`.
@@ -48,16 +50,23 @@ reaches the replica through normal replication, which is what makes the thread s
 ## Acceptance
 
 - [ ] Clicking through the flow stores one row, and a second `POST` doesn't call `search`.
-- [ ] After a new reply, `GET` shows `stale: true`, and `POST` regenerates.
-- [ ] A summary is still returned with `search` down, if it's cached.
-- [ ] With `search` down and no cached summary, `POST` returns 503, and chat is unaffected.
-- [ ] A thread with 2 replies returns 400. A reply as `:msgID` returns 400.
-- [ ] A caller who can't read the channel gets 404 on `GET` and `POST`, and no `search` call.
+      *Passes with fakes and over HTTP with a fake gRPC search. Click through in the main tree.*
+- [x] After a new reply, `GET` shows `stale: true`, and `POST` regenerates. *(fakes)*
+- [x] A summary is still returned with `search` down, if it's cached. *(fakes, and over HTTP
+      with a closed search port)*
+- [x] With `search` down and no cached summary, `POST` returns 503, and chat is unaffected.
+      *(over HTTP with a closed search port: 503 `unavailable`, nothing stored)*
+- [x] A thread with 2 replies returns 400. A reply as `:msgID` returns 400. *(fakes, over HTTP)*
+- [x] A caller who can't read the channel gets 404 on `GET` and `POST`, and no `search` call.
+      *(fakes, over HTTP; the hidden thread's summary isn't even read)*
 - [ ] `mode=threads` finds a thread by meaning, for example `why did the website go down`
-      finding the deploy thread.
+      finding the deploy thread. *Needs T05 and Ollama, in the main tree.*
 - [ ] Carol never gets the `#leadership` thread, even with a query matching it closely.
-- [ ] The row appears on the replica, and `embedding` has 1024 dims.
-- [ ] Service tests with fakes cover all of these branches.
+      *Filtering passes with fakes. Check end to end in the main tree.*
+- [ ] The row appears on the replica, and `embedding` has 1024 dims. *`Upsert` wrote 1024
+      dims on the primary in a rolled-back transaction, bit for bit. Check the replica in the
+      main tree.*
+- [x] Service tests with fakes cover all of these branches.
 
 ## Validate
 
@@ -77,10 +86,61 @@ docker-compose exec -T mysql-replica mysql -uroot -proot mnchat \
 - `gemma3:4b` can get details wrong. Read every seeded summary before the interview.
 - Summaries are empty on a fresh DB, so the demo must click [Summary] first.
 - Don't hold a DB transaction across the `SummarizeThread` call. It can take seconds.
-- `GET` returning 404 for "no summary yet" is the contract, and T09 treats it as a normal state.
-  Browsers still log it, once per thread opened. If that looks bad in the demo, changing it to
-  `200` with a null body is a small change in T07 and `ThreadSummary.tsx`.
+- `GET` returns `200` with a `null` body for "no summary yet", so the browser console stays
+  clean in the demo. The owner chose this on 2026-11-01, replacing the earlier 404. A 404 now
+  only means the root is missing or hidden, and `ThreadSummary.tsx` shows it as an error.
 
 ## Resume notes
 
-Not started.
+**2026-11-01, built in a worktree with fakes. Status stays `in-progress` until the end-to-end
+checks below pass in the main tree with T05 merged.**
+
+Done:
+- `domain.ThreadSummary` and `domain.EmbeddingDims` (1024). The IDs are `json:"-"`, so a
+  response has exactly `summary, last_msg_id, model, stale, updated_at`.
+- `repo/summary.go`: `Get` (`ErrNotFound` if none), `GetMany`, and `Upsert` with
+  `INSERT ... AS new ON DUPLICATE KEY UPDATE`. Reads never select the embedding. `Upsert`
+  rejects anything but 1024 finite floats before writing, and never replaces a summary with
+  one covering fewer replies, since two POSTs can finish out of order.
+- The embedding is bound as raw bytes (4,096, float32 little-endian), not through
+  `STRING_TO_VECTOR`. T05 found that `STRING_TO_VECTOR` rejects subnormal floats with error
+  6138, and I confirmed it on 9.7.4. `TestSummaryUpsertInATransaction`
+  (`-tags integration`) runs the real `Upsert`, `Get` and `GetMany` on the primary in one
+  rolled-back transaction: subnormals, -0 and MaxFloat32 come back bit for bit, an older
+  summary doesn't replace a newer one, and no rows are left.
+- `MessageRepo.LatestReplyID` and the batched `LatestReplyIDs`, one grouped query that joins
+  through the root so it uses `idx_messages_channel` (checked with `EXPLAIN`). Deleted
+  replies don't count.
+- `service/summary.go`: access check is member, root, `GetVisible` on the root's channel (any
+  failure is `ErrNotFound`, and unexpected errors are logged), then top-level (`ErrInvalid`).
+  POST: under 3 replies is 400, a summary covering the newest reply returns without `search`,
+  otherwise `SummarizeThread`, `Upsert`, read the row back, then compute `Stale`. A response
+  with an empty summary or a bad embedding is `ErrUnavailable` and stores nothing.
+- `SearchService.Threads` and `mode=threads`: limit 5 by default, 20 max, capped hits, roots from
+  the primary, only readable top-level roots reach the summary and reply queries, threads
+  without a summary dropped, search's order kept, repeats dropped. `q` validation is shared
+  with messages mode.
+- Routes `GET` and `POST /workspaces/:wsID/messages/:msgID/summary`, wired in `cmd/api.go`.
+- Migration `00006`: deploy and rollback, late Northwind payment, October cloud bill overrun
+  (all `#general`), team lunch (`#random`), Support restructuring (`#leadership`, Alice and
+  Bob only). Up and Down were dry-run on the shared primary in one rolled-back transaction:
+  reply counts match, every poster is a channel member, Carol can't read the `#leadership`
+  thread, and Down removes everything, including a summary through the foreign key.
+
+**Contract change:** `GET .../summary` with no summary yet is now `200` with a `null` body,
+not `404`. CONTRACTS.md, `web/src/api.ts` (`ThreadSummary | null`) and `ThreadSummary.tsx`
+(a 404 is now an error, not "no summary") changed with it. `T09-summary-ui.md` still
+describes the old 404 behavior, and `README.md` still needs the decision recorded.
+
+Left for the main tree, after merging T05:
+- `make db`, `make search`, `make api` (applies `00006`), then click through: POST once,
+  POST again with no `search` call, add a reply, GET shows `stale: true`, POST regenerates.
+- Stop `search`: a cached GET and POST still work, and an uncached POST returns 503.
+- `mode=threads&q=why did the website go down` finds the deploy thread once it's summarized.
+- As Carol, a query matching the restructuring thread never returns it.
+- On the replica: `SELECT thread_root_id, VECTOR_DIM(embedding) FROM thread_summaries` shows 1024.
+- `MNCHAT_TEST_MYSQL_DSN=... go test ./internal/repo/ -run TestLatestReplyIDs` checks the
+  latest-reply query against a real DB. It commits and then deletes messages, like
+  `TestGetManyFilters`, so not during a demo. It wasn't run here. The query's SQL was checked
+  with `EXPLAIN` and in a rolled-back transaction.
+- Read every seeded summary that `gemma3:4b` writes before the interview.

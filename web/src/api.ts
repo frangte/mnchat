@@ -29,6 +29,14 @@ export type Message = {
   created_at: string
 }
 
+export type ThreadSummary = {
+  summary: string
+  last_msg_id: number
+  model: string
+  stale: boolean
+  updated_at: string
+}
+
 export type ServerEvent =
   | { type: 'message.created'; channel_id: number; data: Message }
   | { type: 'channel.created'; channel_id: number; data: Channel }
@@ -105,6 +113,10 @@ export const api = {
     request<List<Message>>('GET', `/workspaces/${wsId}/messages/${rootId}/replies?limit=100`).then(
       (r) => r.items,
     ),
+  summary: (wsId: number, rootId: number) =>
+    request<ThreadSummary>('GET', `/workspaces/${wsId}/messages/${rootId}/summary`),
+  summarize: (wsId: number, rootId: number) =>
+    request<ThreadSummary>('POST', `/workspaces/${wsId}/messages/${rootId}/summary`),
   postMessage: (wsId: number, chId: number, body: string, threadRootId?: number) =>
     request<Message>('POST', `/workspaces/${wsId}/channels/${chId}/messages`, {
       body,

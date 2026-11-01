@@ -4,6 +4,7 @@ import { useStickToBottom } from '../useStickToBottom'
 import { Composer } from './Composer'
 import { MessageRow, startsGroup } from './MessageRow'
 import { Spinner } from './Spinner'
+import { ThreadSummary } from './ThreadSummary'
 
 type Props = {
   workspaceId: number
@@ -50,6 +51,7 @@ export function ThreadPanel({ workspaceId, channel, rootId, currentUserId, onClo
 
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto pb-4">
         <MessageRow message={root} header />
+        <ThreadSummary workspaceId={workspaceId} rootId={rootId} replyCount={root.reply_count} />
         {root.reply_count > 0 && (
           <div className="my-2 flex items-center px-5" role="separator">
             <span className="mr-3 text-xs text-zinc-500">

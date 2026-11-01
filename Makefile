@@ -1,4 +1,4 @@
-.PHONY: db replica-status api web test proto down reset-db
+.PHONY: db replica-status api search web test proto down reset-db
 
 db: ## start MySQL primary and read-only replica in docker
 	docker-compose up -d mysql mysql-replica
@@ -9,6 +9,9 @@ replica-status: ## show replication health
 
 api: ## run the Go API locally (applies migrations + demo seed)
 	go run ./cmd/mnchat api
+
+search: ## run the search service locally (gRPC :9190, metrics :9191)
+	go run ./cmd/mnchat-search
 
 web: ## run the React dev server on :5173
 	cd web && npm install && npm run dev

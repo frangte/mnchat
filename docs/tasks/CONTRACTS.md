@@ -240,6 +240,10 @@ last as long as the connection.
 | `mnchat_ai_duration_seconds` | histogram | `op` |
 | `mnchat_ai_tokens_total` | counter | `direction` = `input`, `output` |
 
+`rpc` is the method name, such as `SearchMessages`. `code` is the Go name of the gRPC code:
+`OK`, `InvalidArgument`, `NotFound`, `Unavailable`, `DeadlineExceeded`, `Canceled`, `Unimplemented`.
+Health checks aren't counted.
+
 **Replication:** from `mysqld-exporter`. T10 records the exact metric name here, because it
 varies by exporter version.
 

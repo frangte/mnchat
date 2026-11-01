@@ -55,7 +55,54 @@ Tested with `--innodb-ft-min-token-size=2` on both servers and the default parse
 
 - With the default minimum of 3, `Go` finds nothing. That setting must be on **both**
   servers **before** the index is built, so it needs a fresh database.
-- Stopword behaviour with required terms, such as `+how* +to*`, is untested. T04 must check it.
+
+### Stopwords, underscores and long words
+
+T04 tested these on the real replica as `search_reader`, with the default parser and
+`innodb_ft_enable_stopword=1`. The test row is `how to deploy the gateway`.
+
+| Query, `IN BOOLEAN MODE` | Matches |
+|---|---|
+| `+how* +to* +deploy*` | **Nothing**, although the row has all three words |
+| `+how +to +deploy` | Nothing |
+| `+how* +deploy*`, `+to* +deploy*` | Nothing |
+| `+deploy*` | The row, plus `deployed` |
+| `+how*` | Only `however`, never `how` |
+| `+to*` | Only `today` and `tomorrow`, never `to` |
+| `+the*`, `+in*`, `+how`, `+to` | Nothing |
+
+- **A required stopword empties the whole query**, because stopwords are never indexed. The
+  `*` doesn't help: it matches longer words that start the same way. `search` drops these words in
+  the query builder, so `how to deploy` runs as `+deploy*`.
+- The list has 36 rows and 35 distinct words, because `the` appears twice. The Go copy is in
+  `internal/search/store/query.go`, and `TestStopwordListMatchesServer` compares it with
+  `information_schema.INNODB_FT_DEFAULT_STOPWORD`. That table needs `PROCESS`, so the test reads
+  it as root.
+- A query of only stopwords, such as `how to`, returns no hits.
+
+| Token | Result |
+|---|---|
+| `snake_case` in a body | One index token. `+snake_case*` and `+snake*` match, while `+case*` and `+snake* +case*` don't |
+| `_private_`, `__dunder__` in a body | Also one token each. `+private*` and `+dunder*` don't match |
+| `don't`, `o'brien` in a body | The apostrophe splits: `+don*` and `+brien*` match |
+| `well-known`, `www.example.com` | Split at `-` and `.`. `+well* +known*` and `+example*` match |
+| `10:00` | `+10* +00*` matches |
+| `2fa`, `v2`, `2026` | Each matches with `+token*`, including the all-digit one |
+| A term of 84 characters | Treated as a real term, so a query requiring it finds nothing |
+| A term of 85 or more characters | **Silently ignored:** `+deploy* +<85 chars>*` returns the `+deploy*` rows, with no error |
+| `café` in a body | `+café*` matches, `+cafe*` doesn't |
+| `日本語` in a body | `+日本語*` doesn't match. Runs without error. Non-English search is out of scope |
+
+**Injection.** Each of `+-><()~*"@`, unbalanced quotes and brackets, `'`, `\`, `%`, a NUL byte and
+`'; DROP TABLE messages; --` ran through `SearchMessages` on real MySQL with no error and no change
+to the required terms. For example `kestrel -deploy` still requires `deploy`.
+
+**Query plan.** Prepared with bound `?` in both `AGAINST` clauses, as the Go driver sends it, the
+plan is `Full-text index search on messages using ft_messages_body`, then a filter on
+`workspace_id`, `channel_id` and `deleted_at`. The data set was only seed rows, so this says nothing
+about speed at volume.
+
+**Scores** in a small table can be identical across rows, so `id DESC` is what makes the order stable.
 
 ## Vectors
 

@@ -41,6 +41,16 @@ export type ServerEvent =
   | { type: 'message.created'; channel_id: number; data: Message }
   | { type: 'channel.created'; channel_id: number; data: Channel }
 
+export type SearchMode = 'messages' | 'threads'
+
+export type MessageHit = { message: Message; score: number }
+
+export type ThreadHit = { root: Message; summary: string; stale: boolean; score: number }
+
+export type SearchResults =
+  | { mode: 'messages'; items: MessageHit[] }
+  | { mode: 'threads'; items: ThreadHit[] }
+
 export class ApiError extends Error {
   status: number
   code: string
@@ -122,6 +132,11 @@ export const api = {
       body,
       thread_root_id: threadRootId,
     }),
+  search: (wsId: number, q: string, mode: SearchMode) =>
+    request<SearchResults>(
+      'GET',
+      `/workspaces/${wsId}/search?q=${encodeURIComponent(q)}&mode=${mode}`,
+    ),
 }
 
 export function socketURL(workspaceId: number, token: string) {

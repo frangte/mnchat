@@ -1,6 +1,6 @@
 # T08: Search input and results panel
 
-**Status:** todo · **Size:** S · **Depends on:** the HTTP contract only, testable with mocks · **Blocks:** demo
+**Status:** done · **Size:** S · **Depends on:** the HTTP contract only, testable with mocks · **Blocks:** demo
 
 ## Goal
 
@@ -47,15 +47,15 @@ Don't change `MessageList.tsx`, `Sidebar.tsx`, `Composer.tsx` or `index.css`.
 
 ## Acceptance
 
-- [ ] With no search active, the page looks exactly as it does today, apart from the input.
-- [ ] Reuses existing colours, spacing, `Avatar`, `Spinner` and `format.ts`.
-- [ ] Only one right-side panel shows. Opening a thread from results replaces search.
-- [ ] Clicking a reply result opens the right thread in the right channel.
-- [ ] Switching workspace closes the panel.
-- [ ] With `search` down, the panel shows the unavailable message and chat keeps working.
-- [ ] Keyboard: input, tabs and results are reachable, with visible focus.
-- [ ] Mobile: the panel is full screen like `ThreadPanel`, and the input stays out of the header.
-- [ ] `npm run build` passes.
+- [x] With no search active, the page looks exactly as it does today, apart from the input.
+- [x] Reuses existing colours, spacing, `Avatar`, `Spinner` and `format.ts`.
+- [x] Only one right-side panel shows. Opening a thread from results replaces search.
+- [x] Clicking a reply result opens the right thread in the right channel.
+- [x] Switching workspace closes the panel.
+- [x] With `search` down, the panel shows the unavailable message and chat keeps working.
+- [x] Keyboard: input, tabs and results are reachable, with visible focus.
+- [x] Mobile: the panel is full screen like `ThreadPanel`, and the input stays out of the header.
+- [x] `npm run build` passes.
 
 ## Validate
 
@@ -78,4 +78,27 @@ Then a browser check. Chrome isn't installed, but a Playwright Chromium is cache
 
 ## Resume notes
 
-Not started.
+Done, and verified in Chromium against the real API with only `/search` mocked, because T06
+doesn't exist yet. The mock used real message IDs, so channel, thread and reply loading are real.
+
+**Recheck after T06 merges:** real hits, a real 503, and that empty results render. All of these
+have only been tested against mocks.
+
+- Idle pixel diff against a pristine 8d283ad build, using a frozen API snapshot: mobile is
+  identical and desktop differs only inside the input.
+- The panel handles `items: null` as well as `[]`, because Go encodes a nil slice as null.
+- Errors other than 503 show `Couldn't search: <message>`. Until T06 merges, the real route's
+  404 lands here.
+
+Choices the task left open:
+
+- A top-level message hit switches channel and closes search, because `selectChannel` clears
+  panels. It doesn't scroll to the message, so an older hit can be off screen.
+- The input keeps its text after a result opens, so Enter returns to the results. The Threads
+  tab resets to Messages when it does. Escape, ✕ and a workspace switch clear the text.
+- Message hits show the day as well as the time, because a time alone misleads across days.
+- Escape with a thread open clears the input and leaves the thread open.
+- Tab from the input jumps to the active tab. In DOM order the panel follows every message's
+  buttons, even though it sits right beside the input.
+- With a panel open at 768px or a little wider, the header input shrinks to a sliver, as the
+  composer already does. It doesn't overflow.

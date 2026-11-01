@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Message, type User } from '../api'
 import { useAuth } from '../auth'
@@ -7,13 +7,18 @@ import { Sidebar } from '../components/Sidebar'
 import { MessageList } from '../components/MessageList'
 import { Composer } from '../components/Composer'
 import { ThreadPanel } from '../components/ThreadPanel'
+import { SearchPanel } from '../components/SearchPanel'
 import { Spinner } from '../components/Spinner'
+
+type Panel = { kind: 'thread'; rootId: number } | { kind: 'search'; query: string } | null
 
 export function ChatPage({ user }: { user: User }) {
   const { logout } = useAuth()
   const [workspaceId, setWorkspaceId] = useState<number | null>(null)
   const [channelId, setChannelId] = useState<number | null>(null)
-  const [threadRootId, setThreadRootId] = useState<number | null>(null)
+  const [panel, setPanel] = useState<Panel>(null)
+  const [searchText, setSearchText] = useState('')
+  const searchPanelRef = useRef<HTMLElement>(null)
   const [unread, setUnread] = useState<Record<number, number>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
@@ -40,7 +45,7 @@ export function ChatPage({ user }: { user: User }) {
 
   const selectChannel = (id: number) => {
     setChannelId(id)
-    setThreadRootId(null)
+    setPanel(null)
     setUnread((u) => {
       const next = { ...u }
       delete next[id]
@@ -52,9 +57,40 @@ export function ChatPage({ user }: { user: User }) {
   const selectWorkspace = (id: number) => {
     setWorkspaceId(id)
     setChannelId(null)
-    setThreadRootId(null)
+    setPanel(null)
+    setSearchText('')
     setUnread({})
     setSidebarOpen(false)
+  }
+
+  const submitSearch = (e: FormEvent) => {
+    e.preventDefault()
+    const query = searchText.trim()
+    if (query) setPanel({ kind: 'search', query })
+  }
+
+  const closeSearch = () => {
+    setSearchText('')
+    setPanel(null)
+  }
+
+  const onSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing) return
+    const searching = panel?.kind === 'search'
+    if (e.key === 'Escape') {
+      if (searching) closeSearch()
+      else setSearchText('')
+    } else if (e.key === 'Tab' && !e.shiftKey && searching) {
+      // The panel sits beside the input but follows the whole message list in DOM order.
+      e.preventDefault()
+      searchPanelRef.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus()
+    }
+  }
+
+  // selectChannel clears the panel, so the thread has to be set after it.
+  const openSearchResult = (id: number, threadRootId: number | null) => {
+    selectChannel(id)
+    if (threadRootId !== null) setPanel({ kind: 'thread', rootId: threadRootId })
   }
 
   if (workspaces.isPending || (workspace && channels.isPending)) {
@@ -105,6 +141,22 @@ export function ChatPage({ user }: { user: User }) {
             ☰
           </button>
           <h2 className="truncate font-semibold">{channel ? `# ${channel.name}` : workspace.name}</h2>
+          <form
+            role="search"
+            onSubmit={submitSearch}
+            className="ml-auto hidden w-56 min-w-0 rounded-xl border border-zinc-300 bg-white transition focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/20 sm:block"
+          >
+            <input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              onKeyDown={onSearchKeyDown}
+              placeholder="Search…"
+              aria-label="Search"
+              maxLength={200}
+              autoComplete="off"
+              className="block w-full bg-transparent px-3 py-1.5 text-sm outline-none placeholder:text-zinc-400"
+            />
+          </form>
         </header>
 
         {channel ? (
@@ -114,7 +166,7 @@ export function ChatPage({ user }: { user: User }) {
               workspaceId={workspace.id}
               channel={channel}
               currentUserId={user.id}
-              onOpenThread={setThreadRootId}
+              onOpenThread={(rootId) => setPanel({ kind: 'thread', rootId })}
             />
             <Composer key={`composer-${channel.id}`} workspaceId={workspace.id} channel={channel} />
           </>
@@ -125,14 +177,24 @@ export function ChatPage({ user }: { user: User }) {
         )}
       </main>
 
-      {channel && threadRootId !== null && (
+      {channel && panel?.kind === 'thread' && (
         <ThreadPanel
-          key={threadRootId}
+          key={panel.rootId}
           workspaceId={workspace.id}
           channel={channel}
-          rootId={threadRootId}
+          rootId={panel.rootId}
           currentUserId={user.id}
-          onClose={() => setThreadRootId(null)}
+          onClose={() => setPanel(null)}
+        />
+      )}
+      {panel?.kind === 'search' && (
+        <SearchPanel
+          ref={searchPanelRef}
+          workspaceId={workspace.id}
+          channels={channels.data ?? []}
+          query={panel.query}
+          onClose={closeSearch}
+          onOpenResult={openSearchResult}
         />
       )}
     </div>

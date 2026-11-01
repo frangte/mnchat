@@ -1,6 +1,6 @@
 # T09: Summary button and card in the thread panel
 
-**Status:** in-progress · **Size:** S · **Depends on:** the HTTP contract only, testable with mocks · **Blocks:** demo
+**Status:** blocked · **Size:** S · **Depends on:** the HTTP contract only, testable with mocks · **Blocks:** demo
 
 ## Goal
 
@@ -97,3 +97,8 @@ pixels, at 1280x800 and 390x780, on the same data.
   response, the card reads as fresh until the next reply or reopen. The window is milliseconds.
 - `Summarizing…` uses Composer's `disabled:opacity-40`, about 2:1 contrast. It was kept to match
   the disabled Send button. `disabled:opacity-70` would give about 3.6:1 if the owner wants it.
+
+Merge review on 2026-11-01: the generating button uses `disabled:opacity-70` rather than Composer's
+`opacity-40`, because 1.97:1 contrast is too faint for a loading state in a live demo. The one open
+box is `aria-live` under a real screen reader, which needs the owner to run VoiceOver. Everything
+backend-dependent was mocked, so re-check it end to end after T07.

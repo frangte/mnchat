@@ -35,7 +35,7 @@ Status values: `todo`, `in-progress`, `blocked`, `done`.
 | [T06](T06-chat-search-endpoint.md) | Chat search endpoint, timeout, breaker | M | in-progress | T00 |
 | [T07](T07-chat-summary-endpoint.md) | Chat summary endpoints, thread results, seed threads | M | todo | T03, T06 |
 | [T08](T08-search-ui.md) | Search input and results panel | S | in-progress | contract only |
-| [T09](T09-summary-ui.md) | Summary button and card in the thread panel | S | in-progress | contract only |
+| [T09](T09-summary-ui.md) | Summary button and card in the thread panel | S | blocked: owner VoiceOver check, re-test after T07 | contract only |
 | [T10](T10-observability-stack.md) | Prometheus, Grafana, exporters, `make up` | S | todo | T03, T04 |
 | [T11](T11-mock-interview.md) | Mock interview questions | S | done | none |
 | [T12](T12-dashboards-alerts.md) | Grafana dashboards and alert rules | M | todo | T01, T04, T05, T10 |

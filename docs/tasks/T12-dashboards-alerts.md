@@ -86,6 +86,9 @@ Use `make load` from T13 for traffic if it's available.
   breaker goes half-open every 10 s, and a scrape reading 1 resets the `for` timer, so the alert
   may never fire. Use `max_over_time(mnchat_search_breaker_state[1m]) == 2`, and prove it fires
   during a real outage longer than a few minutes.
+- WebSocket requests reach `mnchat_http_requests_total` only when the socket closes, with status
+  101. Exclude `/api/v1/ws` from error and rate panels.
+- `mnchat_http_*` series appear only after their first request, so panels can be empty on a fresh boot.
 - Keep the panel count low. An interviewer looks at each one for a few seconds.
 
 ## Resume notes

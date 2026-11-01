@@ -1,6 +1,6 @@
 # T01: Metrics package and chat instrumentation
 
-**Status:** in-progress (one box left, see Resume notes) · **Size:** S · **Depends on:** T00 · **Blocks:** T12
+**Status:** done (one box left, see Resume notes) · **Size:** S · **Depends on:** T00 · **Blocks:** T12
 
 ## Goal
 
@@ -44,7 +44,7 @@ Replace the hub's `slog.Warn` only if it adds nothing. Keep the existing logging
       shared container still running the old image.
 - [x] Posting a message and a reply moves `mnchat_messages_posted_total` for each `kind`.
 - [x] `route` labels show `/api/v1/workspaces/:wsID/channels` rather than real IDs.
-- [ ] Opening and closing a browser tab moves `mnchat_ws_clients` up and down. Not checked
+- [x] Opening and closing a browser tab moves `mnchat_ws_clients` up and down. Not checked
       in a browser, because Chrome isn't installed here. See Resume notes.
 - [x] `/api/v1/readyz` returns 200, and 503 with MySQL stopped. The 200 was checked live.
       The 503 is a unit test, because shared MySQL can't be stopped and `mysqldb.Open`
@@ -102,3 +102,7 @@ is shared in this round. The API ran with `HTTP_ADDR=:18081 go run ./cmd/mnchat 
 - The hub's `slog.Warn` stays, because it carries the `user_id` the counter doesn't.
 
 No change to CONTRACTS.md was needed.
+
+Merge check on 2026-11-01: real Chromium tabs moved `mnchat_ws_clients` 0, 1, 2, 1, 0, and killing
+the browser returned it to 0. The race detector was clean. `readyz` returning 503 is proven by unit
+test only, because `mysqldb.Open` refuses to start against a dead database.

@@ -43,6 +43,7 @@ services:
     environment:
       MYSQL_DSN: mnchat:mnchat@tcp(mysql:3306)/mnchat?parseTime=true&loc=UTC
       JWT_SECRET: dev-secret-change-me
+      SEARCH_GRPC_ADDR: search:9190
     ports:
       - "8080:8080"
     depends_on:

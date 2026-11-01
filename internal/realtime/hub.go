@@ -5,6 +5,7 @@ package realtime
 import (
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"sync"
 
 	"github.com/frangte/mnchat/internal/domain"
@@ -47,8 +48,9 @@ func (h *Hub) Unsubscribe(c *Client) {
 	h.removeLocked(c)
 }
 
-// Publish sends ev to every client in the workspace. Clients whose buffer is
-// full are dropped rather than blocking the publisher; they refetch on reconnect.
+// Publish sends ev to the workspace's clients, limited to ev.Audience when set.
+// Clients whose buffer is full are dropped rather than blocking the publisher;
+// they refetch on reconnect.
 func (h *Hub) Publish(workspaceID int64, ev domain.Event) {
 	payload, err := json.Marshal(ev)
 	if err != nil {
@@ -58,6 +60,9 @@ func (h *Hub) Publish(workspaceID int64, ev domain.Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for c := range h.clients[workspaceID] {
+		if ev.Audience != nil && !slices.Contains(ev.Audience, c.userID) {
+			continue
+		}
 		select {
 		case c.send <- payload:
 		default:

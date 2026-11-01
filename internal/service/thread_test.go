@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/frangte/mnchat/internal/domain"
@@ -12,20 +13,29 @@ type fakeWorkspaces struct{ WorkspaceStore }
 
 func (fakeWorkspaces) MemberRole(context.Context, int64, int64) (string, error) { return "member", nil }
 
-// fakeChannels exposes channels 1 (joined) and 2 (not joined); anything else is hidden.
+// fakeChannels exposes public channels 1 (joined) and 2 (not joined) and private
+// channel 4 (joined); anything else is hidden.
 type fakeChannels struct {
 	ChannelStore
-	joined []int64
+	joined     []int64
+	members    []int64
+	membersErr error
 }
 
 func (f *fakeChannels) GetVisible(_ context.Context, _, channelID, _ int64) (domain.Channel, error) {
 	switch channelID {
 	case 1:
-		return domain.Channel{ID: 1, IsMember: true}, nil
+		return domain.Channel{ID: 1, Type: domain.ChannelPublic, IsMember: true}, nil
 	case 2:
-		return domain.Channel{ID: 2}, nil
+		return domain.Channel{ID: 2, Type: domain.ChannelPublic}, nil
+	case 4:
+		return domain.Channel{ID: 4, Type: domain.ChannelPrivate, IsMember: true}, nil
 	}
 	return domain.Channel{}, domain.ErrNotFound
+}
+
+func (f *fakeChannels) MemberIDs(context.Context, int64) ([]int64, error) {
+	return f.members, f.membersErr
 }
 
 func (f *fakeChannels) AddMember(_ context.Context, channelID, _ int64) error {
@@ -135,6 +145,46 @@ func TestReplies(t *testing.T) {
 	if messages.listedLimit != maxMessagesPage {
 		t.Fatalf("limit = %d, want %d", messages.listedLimit, maxMessagesPage)
 	}
+}
+
+func TestPostMessageAudience(t *testing.T) {
+	t.Run("public channel reaches the workspace", func(t *testing.T) {
+		svc, _, _, pub := newThreadFixture()
+
+		if _, err := svc.PostMessage(context.Background(), 1, 1, 7, "hello", nil); err != nil {
+			t.Fatalf("PostMessage: %v", err)
+		}
+		if len(pub.events) != 1 || pub.events[0].Audience != nil {
+			t.Fatalf("events = %+v, want one with a nil audience", pub.events)
+		}
+	})
+
+	t.Run("private channel reaches members only", func(t *testing.T) {
+		svc, channels, _, pub := newThreadFixture()
+		channels.members = []int64{7, 8}
+
+		if _, err := svc.PostMessage(context.Background(), 1, 4, 7, "hello", nil); err != nil {
+			t.Fatalf("PostMessage: %v", err)
+		}
+		if len(pub.events) != 1 || !slices.Equal(pub.events[0].Audience, []int64{7, 8}) {
+			t.Fatalf("events = %+v, want audience [7 8]", pub.events)
+		}
+	})
+
+	t.Run("failed member lookup never broadcasts", func(t *testing.T) {
+		svc, channels, messages, pub := newThreadFixture()
+		channels.membersErr = errors.New("db down")
+
+		if _, err := svc.PostMessage(context.Background(), 1, 4, 7, "hello", nil); err != nil {
+			t.Fatalf("PostMessage: %v", err)
+		}
+		if len(messages.created) != 1 {
+			t.Fatalf("created %d messages, want 1", len(messages.created))
+		}
+		if len(pub.events) != 0 {
+			t.Fatalf("published %+v, want nothing", pub.events)
+		}
+	})
 }
 
 func TestRepliesHiddenFromNonReaders(t *testing.T) {

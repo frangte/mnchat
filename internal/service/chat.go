@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -26,6 +27,7 @@ type ChannelStore interface {
 	GetVisible(ctx context.Context, workspaceID, channelID, userID int64) (domain.Channel, error)
 	Create(ctx context.Context, workspaceID, creatorID int64, typ domain.ChannelType, name string) (domain.Channel, error)
 	AddMember(ctx context.Context, channelID, userID int64) error
+	MemberIDs(ctx context.Context, channelID int64) ([]int64, error)
 }
 
 type MessageStore interface {
@@ -151,7 +153,18 @@ func (s *ChatService) PostMessage(ctx context.Context, workspaceID, channelID, u
 	if err != nil {
 		return domain.Message{}, err
 	}
-	s.pub.Publish(workspaceID, domain.Event{Type: domain.EventMessageCreated, ChannelID: ch.ID, Data: msg})
+	ev := domain.Event{Type: domain.EventMessageCreated, ChannelID: ch.ID, Data: msg}
+	if ch.Type != domain.ChannelPublic {
+		members, err := s.channels.MemberIDs(ctx, ch.ID)
+		if err != nil {
+			// The message is stored, and members see it on their next refetch.
+			// Never fall back to a workspace-wide broadcast.
+			slog.Error("load channel audience", "channel_id", ch.ID, "err", err)
+			return msg, nil
+		}
+		ev.Audience = members
+	}
+	s.pub.Publish(workspaceID, ev)
 	return msg, nil
 }
 

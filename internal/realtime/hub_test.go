@@ -28,6 +28,41 @@ func TestHubPublishIsScopedToWorkspace(t *testing.T) {
 	}
 }
 
+func TestHubPublishRespectsAudience(t *testing.T) {
+	h := NewHub()
+	member := h.Subscribe(1, 10)
+	secondTab := h.Subscribe(1, 10)
+	outsider := h.Subscribe(1, 11)
+
+	h.Publish(1, domain.Event{Type: domain.EventMessageCreated, ChannelID: 5, Audience: []int64{10}})
+
+	for _, c := range []*Client{member, secondTab} {
+		select {
+		case <-c.Messages():
+		default:
+			t.Fatal("member did not receive the event")
+		}
+	}
+	select {
+	case msg := <-outsider.Messages():
+		t.Fatalf("outsider received %s", msg)
+	default:
+	}
+}
+
+func TestHubEmptyAudienceReachesNobody(t *testing.T) {
+	h := NewHub()
+	c := h.Subscribe(1, 10)
+
+	h.Publish(1, domain.Event{Type: domain.EventMessageCreated, ChannelID: 5, Audience: []int64{}})
+
+	select {
+	case msg := <-c.Messages():
+		t.Fatalf("client received %s", msg)
+	default:
+	}
+}
+
 func TestHubUnsubscribeAndCloseAreIdempotent(t *testing.T) {
 	h := NewHub()
 	c := h.Subscribe(1, 10)

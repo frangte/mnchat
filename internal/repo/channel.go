@@ -91,6 +91,24 @@ func (r *ChannelRepo) AddMember(ctx context.Context, channelID, userID int64) er
 	return err
 }
 
+func (r *ChannelRepo) MemberIDs(ctx context.Context, channelID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT user_id FROM channel_members WHERE channel_id = ?`, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 type scanner interface{ Scan(dest ...any) error }
 
 func scanChannel(s scanner) (domain.Channel, error) {

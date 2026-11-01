@@ -1,7 +1,9 @@
-.PHONY: up db replica-status api search models web test proto down reset-db
+.PHONY: up db replica-status api search models web test load chaos-search proto down reset-db
 
 OLLAMA_CHAT_MODEL ?= gemma3:4b
 OLLAMA_EMBED_MODEL ?= bge-m3
+VUS ?= 5
+DURATION ?= 60s
 
 up: ## start the whole backend and monitoring stack in docker (the UI stays separate: make web)
 	docker-compose up -d --build
@@ -29,6 +31,12 @@ web: ## run the React dev server on :5173
 
 test:
 	go vet ./... && go test ./...
+
+load: ## k6 chat load in docker, $(VUS) users for $(DURATION); fails on any chat error
+	docker-compose --profile load run --rm -T -e VUS=$(VUS) -e DURATION=$(DURATION) k6 run /scripts/chat.js
+
+chaos-search: ## stop search, then kill the replica, under chat load; fails if chat sees any error
+	./scripts/chaos-search.sh
 
 proto: ## regenerate gRPC code from proto/
 	protoc -I proto \

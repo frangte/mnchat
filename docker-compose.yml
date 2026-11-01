@@ -112,6 +112,15 @@ services:
     depends_on:
       - prometheus
 
+  # Load generator. Only `--profile load` starts it (make load, make chaos-search), never make up.
+  k6:
+    image: grafana/k6:1.8.1
+    profiles: [load]
+    environment:
+      BASE_URL: http://api:8080
+    volumes:
+      - ./deploy/load:/scripts:ro
+
 volumes:
   mysql-data:
   mysql-replica-data:

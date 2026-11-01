@@ -15,6 +15,7 @@ import (
 	"github.com/frangte/mnchat/internal/config"
 	"github.com/frangte/mnchat/internal/httpapi"
 	"github.com/frangte/mnchat/internal/infra/mysqldb"
+	"github.com/frangte/mnchat/internal/platform/metrics"
 	"github.com/frangte/mnchat/internal/realtime"
 	"github.com/frangte/mnchat/internal/repo"
 	"github.com/frangte/mnchat/internal/service"
@@ -41,15 +42,18 @@ func newAPICmd() *cobra.Command {
 				}
 			}
 
-			hub := realtime.NewHub()
+			reg := metrics.NewRegistry()
+			apiMetrics := metrics.NewAPI(reg)
+
+			hub := realtime.NewHub(apiMetrics)
 			authSvc := service.NewAuthService(repo.NewUserRepo(db), cfg.JWTSecret)
 			chatSvc := service.NewChatService(
-				repo.NewWorkspaceRepo(db), repo.NewChannelRepo(db), repo.NewMessageRepo(db), hub,
+				repo.NewWorkspaceRepo(db), repo.NewChannelRepo(db), repo.NewMessageRepo(db), hub, apiMetrics,
 			)
 
 			srv := &http.Server{
 				Addr:              cfg.HTTPAddr,
-				Handler:           httpapi.NewRouter(authSvc, chatSvc, hub, cfg.WSOrigins),
+				Handler:           httpapi.NewRouter(authSvc, chatSvc, hub, db, apiMetrics, metrics.Handler(reg), cfg.WSOrigins),
 				ReadHeaderTimeout: 5 * time.Second,
 			}
 			go func() {

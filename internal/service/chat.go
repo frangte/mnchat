@@ -42,15 +42,21 @@ type Publisher interface {
 	Publish(workspaceID int64, ev domain.Event)
 }
 
+// MessageMetrics counts stored messages; kind is "message" or "reply".
+type MessageMetrics interface {
+	MessagePosted(kind string)
+}
+
 type ChatService struct {
 	workspaces WorkspaceStore
 	channels   ChannelStore
 	messages   MessageStore
 	pub        Publisher
+	metrics    MessageMetrics
 }
 
-func NewChatService(w WorkspaceStore, c ChannelStore, m MessageStore, pub Publisher) *ChatService {
-	return &ChatService{workspaces: w, channels: c, messages: m, pub: pub}
+func NewChatService(w WorkspaceStore, c ChannelStore, m MessageStore, pub Publisher, metrics MessageMetrics) *ChatService {
+	return &ChatService{workspaces: w, channels: c, messages: m, pub: pub, metrics: metrics}
 }
 
 func (s *ChatService) Workspaces(ctx context.Context, userID int64) ([]domain.Workspace, error) {
@@ -153,6 +159,7 @@ func (s *ChatService) PostMessage(ctx context.Context, workspaceID, channelID, u
 	if err != nil {
 		return domain.Message{}, err
 	}
+	s.metrics.MessagePosted(messageKind(threadRootID))
 	ev := domain.Event{Type: domain.EventMessageCreated, ChannelID: ch.ID, Data: msg}
 	if ch.Type != domain.ChannelPublic {
 		members, err := s.channels.MemberIDs(ctx, ch.ID)
@@ -166,6 +173,13 @@ func (s *ChatService) PostMessage(ctx context.Context, workspaceID, channelID, u
 	}
 	s.pub.Publish(workspaceID, ev)
 	return msg, nil
+}
+
+func messageKind(threadRootID *int64) string {
+	if threadRootID != nil {
+		return "reply"
+	}
+	return "message"
 }
 
 // checkThreadRoot enforces that replies target a top-level message in the same

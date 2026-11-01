@@ -6,8 +6,14 @@ import (
 	"github.com/frangte/mnchat/internal/domain"
 )
 
+type fakeMetrics struct{ connected, disconnected, dropped int }
+
+func (f *fakeMetrics) WSClientConnected()    { f.connected++ }
+func (f *fakeMetrics) WSClientDisconnected() { f.disconnected++ }
+func (f *fakeMetrics) WSClientDropped()      { f.dropped++ }
+
 func TestHubPublishIsScopedToWorkspace(t *testing.T) {
-	h := NewHub()
+	h := NewHub(&fakeMetrics{})
 	a := h.Subscribe(1, 10)
 	b := h.Subscribe(1, 11)
 	other := h.Subscribe(2, 12)
@@ -29,7 +35,7 @@ func TestHubPublishIsScopedToWorkspace(t *testing.T) {
 }
 
 func TestHubPublishRespectsAudience(t *testing.T) {
-	h := NewHub()
+	h := NewHub(&fakeMetrics{})
 	member := h.Subscribe(1, 10)
 	secondTab := h.Subscribe(1, 10)
 	outsider := h.Subscribe(1, 11)
@@ -51,7 +57,7 @@ func TestHubPublishRespectsAudience(t *testing.T) {
 }
 
 func TestHubEmptyAudienceReachesNobody(t *testing.T) {
-	h := NewHub()
+	h := NewHub(&fakeMetrics{})
 	c := h.Subscribe(1, 10)
 
 	h.Publish(1, domain.Event{Type: domain.EventMessageCreated, ChannelID: 5, Audience: []int64{}})
@@ -64,7 +70,7 @@ func TestHubEmptyAudienceReachesNobody(t *testing.T) {
 }
 
 func TestHubUnsubscribeAndCloseAreIdempotent(t *testing.T) {
-	h := NewHub()
+	h := NewHub(&fakeMetrics{})
 	c := h.Subscribe(1, 10)
 	h.Unsubscribe(c)
 	h.Unsubscribe(c) // must not panic on double close
@@ -72,5 +78,38 @@ func TestHubUnsubscribeAndCloseAreIdempotent(t *testing.T) {
 
 	if _, ok := <-c.Messages(); ok {
 		t.Fatal("expected closed channel")
+	}
+}
+
+func TestHubMetricsFollowClients(t *testing.T) {
+	m := &fakeMetrics{}
+	h := NewHub(m)
+	a := h.Subscribe(1, 10)
+	h.Subscribe(2, 11)
+
+	h.Unsubscribe(a)
+	h.Unsubscribe(a) // a repeat must not take the gauge below the real count
+	if want := (fakeMetrics{connected: 2, disconnected: 1}); *m != want {
+		t.Fatalf("metrics = %+v, want %+v", *m, want)
+	}
+
+	h.Close()
+	if want := (fakeMetrics{connected: 2, disconnected: 2}); *m != want {
+		t.Fatalf("after Close, metrics = %+v, want %+v", *m, want)
+	}
+}
+
+func TestHubCountsDroppedClientOnce(t *testing.T) {
+	m := &fakeMetrics{}
+	h := NewHub(m)
+	slow := h.Subscribe(1, 10)
+
+	for range clientBuffer + 1 {
+		h.Publish(1, domain.Event{Type: domain.EventMessageCreated, ChannelID: 5})
+	}
+	h.Unsubscribe(slow) // the websocket handler still unsubscribes after a drop
+
+	if want := (fakeMetrics{connected: 1, disconnected: 1, dropped: 1}); *m != want {
+		t.Fatalf("metrics = %+v, want %+v", *m, want)
 	}
 }

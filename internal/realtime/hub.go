@@ -22,13 +22,22 @@ type Client struct {
 // Messages yields encoded events; it is closed when the client is dropped.
 func (c *Client) Messages() <-chan []byte { return c.send }
 
+// Metrics tracks connected clients. The hub calls it while holding its lock, so
+// implementations must not block.
+type Metrics interface {
+	WSClientConnected()
+	WSClientDisconnected()
+	WSClientDropped()
+}
+
 type Hub struct {
 	mu      sync.Mutex
 	clients map[int64]map[*Client]struct{} // by workspace id
+	metrics Metrics
 }
 
-func NewHub() *Hub {
-	return &Hub{clients: make(map[int64]map[*Client]struct{})}
+func NewHub(m Metrics) *Hub {
+	return &Hub{clients: make(map[int64]map[*Client]struct{}), metrics: m}
 }
 
 func (h *Hub) Subscribe(workspaceID, userID int64) *Client {
@@ -39,6 +48,7 @@ func (h *Hub) Subscribe(workspaceID, userID int64) *Client {
 		h.clients[workspaceID] = make(map[*Client]struct{})
 	}
 	h.clients[workspaceID][c] = struct{}{}
+	h.metrics.WSClientConnected()
 	return c
 }
 
@@ -67,6 +77,7 @@ func (h *Hub) Publish(workspaceID int64, ev domain.Event) {
 		case c.send <- payload:
 		default:
 			slog.Warn("dropping slow websocket client", "user_id", c.userID)
+			h.metrics.WSClientDropped()
 			h.removeLocked(c)
 		}
 	}
@@ -93,4 +104,5 @@ func (h *Hub) removeLocked(c *Client) {
 		delete(h.clients, c.workspaceID)
 	}
 	close(c.send)
+	h.metrics.WSClientDisconnected()
 }

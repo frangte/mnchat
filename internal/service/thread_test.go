@@ -73,6 +73,10 @@ type fakePublisher struct{ events []domain.Event }
 
 func (f *fakePublisher) Publish(_ int64, ev domain.Event) { f.events = append(f.events, ev) }
 
+type fakeMetrics struct{ kinds []string }
+
+func (f *fakeMetrics) MessagePosted(kind string) { f.kinds = append(f.kinds, kind) }
+
 // Thread fixture: 10 is a root in channel 1, 11 replies to it, 20 is a root in
 // channel 2, and 30 sits in hidden channel 3.
 func newThreadFixture() (*ChatService, *fakeChannels, *fakeMessages, *fakePublisher) {
@@ -85,7 +89,37 @@ func newThreadFixture() (*ChatService, *fakeChannels, *fakeMessages, *fakePublis
 		30: {ID: 30, ChannelID: 3},
 	}}
 	pub := &fakePublisher{}
-	return NewChatService(fakeWorkspaces{}, channels, messages, pub), channels, messages, pub
+	return NewChatService(fakeWorkspaces{}, channels, messages, pub, &fakeMetrics{}), channels, messages, pub
+}
+
+func TestPostMessageCountsKind(t *testing.T) {
+	root, missing := int64(10), int64(99)
+	tests := []struct {
+		name       string
+		channel    int64
+		root       *int64
+		membersErr error
+		want       []string
+	}{
+		{name: "top-level message", channel: 1, want: []string{"message"}},
+		{name: "reply", channel: 1, root: &root, want: []string{"reply"}},
+		{name: "stored but not published", channel: 4, membersErr: errors.New("db down"), want: []string{"message"}},
+		{name: "rejected reply", channel: 1, root: &missing},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, channels, _, _ := newThreadFixture()
+			channels.membersErr = tt.membersErr
+			m := &fakeMetrics{}
+			svc.metrics = m
+
+			_, _ = svc.PostMessage(context.Background(), 1, tt.channel, 7, "hello", tt.root)
+
+			if !slices.Equal(m.kinds, tt.want) {
+				t.Fatalf("kinds = %v, want %v", m.kinds, tt.want)
+			}
+		})
+	}
 }
 
 func TestPostMessageReply(t *testing.T) {

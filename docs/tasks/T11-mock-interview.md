@@ -1,6 +1,6 @@
 # T11: Mock interview questions
 
-**Status:** todo · **Size:** S · **Depends on:** none, better after design is settled · **Blocks:** none
+**Status:** done · **Size:** S · **Depends on:** none, better after design is settled · **Blocks:** none
 
 ## Goal
 
@@ -63,12 +63,12 @@ Adjust wording freely, but keep the coverage.
 
 ## Acceptance
 
-- [ ] 10 questions, each with all four parts.
-- [ ] Every number traces to VERIFIED-FACTS.md or real measurements.
-- [ ] Question 1 states the coupling trade-off honestly and doesn't dismiss it.
-- [ ] Doesn't claim production experience the owner hasn't told us about.
-- [ ] Doesn't claim knowledge of ANDPAD's internal systems.
-- [ ] Sounds like how a person would answer out loud, in plain English.
+- [x] 10 questions, each with all four parts.
+- [x] Every number traces to VERIFIED-FACTS.md or real measurements.
+- [x] Question 1 states the coupling trade-off honestly and doesn't dismiss it.
+- [x] Doesn't claim production experience the owner hasn't told us about.
+- [x] Doesn't claim knowledge of ANDPAD's internal systems.
+- [x] Sounds like how a person would answer out loud, in plain English.
 
 ## Validate
 
@@ -84,4 +84,26 @@ No code to run. Check each number against VERIFIED-FACTS.md, and read every answ
 
 ## Resume notes
 
-Not started.
+Done on 2026-11-01. `docs/mock-interview-questions.md` has all 10 questions, each with 6 answer notes.
+
+- **Status table.** A bullet tagged like `(T06)` describes that task's design. The table at the top of
+  the file says what's built, so it's the part to update as tasks land. The notes avoid "planned"
+  and "not built yet", so they stay true.
+- **Numbers.** Measured numbers trace to VERIFIED-FACTS.md or the T02 and T03 Resume notes. Design
+  settings (deadlines, breaker, alert thresholds) come from CONTRACTS.md and T12, and the file labels
+  them as settings, not results. Two figures are arithmetic on verified facts, with the sum shown:
+  4 KB per vector and 4 MB per 1,000 threads. 5 minutes is 5 failures at 60 s each.
+- **Placeholders.** 5 `[fill in after T13]`: Q3 (2), Q5, Q8, Q9. The legend at the top of the file
+  mentions it once more. Q10 has 1 `[your own example]`, which T13 can't fill. The owner has to
+  supply it.
+- **Outside the project sources.** Three claims come from general knowledge of public products: the
+  default `FULLTEXT` parser splitting on spaces and punctuation, Datadog's OpenMetrics check, and
+  Datadog billing custom metrics by tag combination. The owner should be happy to defend them.
+- **Validate.** Numbers were checked against the sources, and code claims against the repo: `api`
+  never uses the replica, chat doesn't use `FULLTEXT`, no retries or rate limits exist, and demo login
+  takes a user ID only. Reading out loud was a read-through by an agent, so the owner should still
+  do it for real.
+- **Design risks found while writing,** both now weak spots. If `bge-m3` takes over 2 s to load cold,
+  the first `SearchThreads` after idle returns 503 (T05, Q9). T05 sets `keep_alive` on the chat call
+  but doesn't mention it for embeds. Separately, `FULLTEXT` is on `messages`, so the primary pays
+  for it on every insert (Q1).

@@ -1,7 +1,11 @@
-.PHONY: db replica-status api search models web test proto down reset-db
+.PHONY: up db replica-status api search models web test proto down reset-db
 
 OLLAMA_CHAT_MODEL ?= gemma3:4b
 OLLAMA_EMBED_MODEL ?= bge-m3
+
+up: ## start the whole backend and monitoring stack in docker (the UI stays separate: make web)
+	docker-compose up -d --build
+	@echo "api http://localhost:8080 · Prometheus http://localhost:9090 · Grafana http://localhost:3000 · UI: make web"
 
 db: ## start MySQL primary and read-only replica in docker
 	docker-compose up -d mysql mysql-replica
@@ -32,7 +36,7 @@ proto: ## regenerate gRPC code from proto/
 		--go-grpc_out=. --go-grpc_opt=module=github.com/frangte/mnchat \
 		proto/search/v1/search.proto
 
-down:
+down: ## stop every container, keeping the data
 	docker-compose down
 
 reset-db: ## wipe MySQL data (re-seeds on next `make api`)

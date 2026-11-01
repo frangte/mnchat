@@ -37,6 +37,7 @@ export function useWorkspaceSocket(workspaceId: number | undefined, onMessage?: 
       socket.onopen = () => {
         if (retry > 0) {
           qc.invalidateQueries({ queryKey: ['messages'] })
+          qc.invalidateQueries({ queryKey: ['replies'] })
           qc.invalidateQueries({ queryKey: ['channels', workspaceId] })
         }
         retry = 0
@@ -45,10 +46,21 @@ export function useWorkspaceSocket(workspaceId: number | undefined, onMessage?: 
       socket.onmessage = (e) => {
         const ev = JSON.parse(e.data) as ServerEvent
         switch (ev.type) {
-          case 'message.created':
-            qc.setQueryData<Message[]>(['messages', ev.channel_id], (old) => appendMessage(old, ev.data))
+          case 'message.created': {
+            const rootId = ev.data.thread_root_id
+            if (rootId === null) {
+              qc.setQueryData<Message[]>(['messages', ev.channel_id], (old) => appendMessage(old, ev.data))
+            } else {
+              qc.setQueryData<Message[]>(['replies', rootId], (old) => appendMessage(old, ev.data))
+              // Only this event bumps the count: the socket delivers a reply once, while
+              // the sender also gets it over REST.
+              qc.setQueryData<Message[]>(['messages', ev.channel_id], (old) =>
+                old?.map((m) => (m.id === rootId ? { ...m, reply_count: m.reply_count + 1 } : m)),
+              )
+            }
             onMessageRef.current?.(ev.data)
             break
+          }
           case 'channel.created':
             qc.invalidateQueries({ queryKey: ['channels', workspaceId] })
             break

@@ -131,6 +131,24 @@ func (h *Handler) listMessages(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
+func (h *Handler) listReplies(c *gin.Context) {
+	wsID, ok := idParam(c, "wsID")
+	if !ok {
+		return
+	}
+	msgID, ok := idParam(c, "msgID")
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	items, err := h.chat.Replies(c, wsID, msgID, userID(c), limit)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
 func (h *Handler) postMessage(c *gin.Context) {
 	wsID, ok := idParam(c, "wsID")
 	if !ok {
@@ -141,12 +159,13 @@ func (h *Handler) postMessage(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Body string `json:"body"`
+		Body         string `json:"body"`
+		ThreadRootID *int64 `json:"thread_root_id"`
 	}
 	if !bindJSON(c, &req) {
 		return
 	}
-	msg, err := h.chat.PostMessage(c, wsID, chID, userID(c), req.Body)
+	msg, err := h.chat.PostMessage(c, wsID, chID, userID(c), req.Body, req.ThreadRootID)
 	if err != nil {
 		writeError(c, err)
 		return

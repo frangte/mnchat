@@ -25,6 +25,7 @@ export type Message = {
   user_id: number
   user_name: string
   body: string
+  reply_count: number
   created_at: string
 }
 
@@ -100,8 +101,15 @@ export const api = {
     request<List<Message>>('GET', `/workspaces/${wsId}/channels/${chId}/messages?limit=100`).then(
       (r) => r.items,
     ),
-  postMessage: (wsId: number, chId: number, body: string) =>
-    request<Message>('POST', `/workspaces/${wsId}/channels/${chId}/messages`, { body }),
+  replies: (wsId: number, rootId: number) =>
+    request<List<Message>>('GET', `/workspaces/${wsId}/messages/${rootId}/replies?limit=100`).then(
+      (r) => r.items,
+    ),
+  postMessage: (wsId: number, chId: number, body: string, threadRootId?: number) =>
+    request<Message>('POST', `/workspaces/${wsId}/channels/${chId}/messages`, {
+      body,
+      thread_root_id: threadRootId,
+    }),
 }
 
 export function socketURL(workspaceId: number, token: string) {

@@ -39,6 +39,7 @@ func NewRouter(auth *service.AuthService, chat *service.ChatService, hub *realti
 	authed.POST("/workspaces/:wsID/channels", h.createChannel)
 	authed.GET("/workspaces/:wsID/channels/:chID/messages", h.listMessages)
 	authed.POST("/workspaces/:wsID/channels/:chID/messages", h.postMessage)
+	authed.GET("/workspaces/:wsID/messages/:msgID/replies", h.listReplies)
 	return r
 }
 

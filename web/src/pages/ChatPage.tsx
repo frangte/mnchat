@@ -6,12 +6,14 @@ import { useWorkspaceSocket } from '../useWorkspaceSocket'
 import { Sidebar } from '../components/Sidebar'
 import { MessageList } from '../components/MessageList'
 import { Composer } from '../components/Composer'
+import { ThreadPanel } from '../components/ThreadPanel'
 import { Spinner } from '../components/Spinner'
 
 export function ChatPage({ user }: { user: User }) {
   const { logout } = useAuth()
   const [workspaceId, setWorkspaceId] = useState<number | null>(null)
   const [channelId, setChannelId] = useState<number | null>(null)
+  const [threadRootId, setThreadRootId] = useState<number | null>(null)
   const [unread, setUnread] = useState<Record<number, number>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
@@ -31,13 +33,14 @@ export function ChatPage({ user }: { user: User }) {
   }, [channel?.id])
 
   const status = useWorkspaceSocket(workspace?.id, (m: Message) => {
-    if (m.channel_id !== activeChannelRef.current && m.user_id !== user.id) {
+    if (m.thread_root_id === null && m.channel_id !== activeChannelRef.current && m.user_id !== user.id) {
       setUnread((u) => ({ ...u, [m.channel_id]: (u[m.channel_id] ?? 0) + 1 }))
     }
   })
 
   const selectChannel = (id: number) => {
     setChannelId(id)
+    setThreadRootId(null)
     setUnread((u) => {
       const next = { ...u }
       delete next[id]
@@ -49,6 +52,7 @@ export function ChatPage({ user }: { user: User }) {
   const selectWorkspace = (id: number) => {
     setWorkspaceId(id)
     setChannelId(null)
+    setThreadRootId(null)
     setUnread({})
     setSidebarOpen(false)
   }
@@ -105,7 +109,13 @@ export function ChatPage({ user }: { user: User }) {
 
         {channel ? (
           <>
-            <MessageList key={channel.id} workspaceId={workspace.id} channel={channel} currentUserId={user.id} />
+            <MessageList
+              key={channel.id}
+              workspaceId={workspace.id}
+              channel={channel}
+              currentUserId={user.id}
+              onOpenThread={setThreadRootId}
+            />
             <Composer key={`composer-${channel.id}`} workspaceId={workspace.id} channel={channel} />
           </>
         ) : (
@@ -114,6 +124,17 @@ export function ChatPage({ user }: { user: User }) {
           </div>
         )}
       </main>
+
+      {channel && threadRootId !== null && (
+        <ThreadPanel
+          key={threadRootId}
+          workspaceId={workspace.id}
+          channel={channel}
+          rootId={threadRootId}
+          currentUserId={user.id}
+          onClose={() => setThreadRootId(null)}
+        />
+      )}
     </div>
   )
 }

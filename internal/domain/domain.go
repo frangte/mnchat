@@ -52,6 +52,7 @@ type Message struct {
 	UserID       int64     `json:"user_id"`
 	UserName     string    `json:"user_name"`
 	Body         string    `json:"body"`
+	ReplyCount   int       `json:"reply_count"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 

@@ -30,6 +30,8 @@ type ChannelStore interface {
 
 type MessageStore interface {
 	List(ctx context.Context, workspaceID, channelID, beforeID int64, limit int) ([]domain.Message, error)
+	ListReplies(ctx context.Context, workspaceID, channelID, rootID int64, limit int) ([]domain.Message, error)
+	Get(ctx context.Context, workspaceID, id int64) (domain.Message, error)
 	Create(ctx context.Context, m domain.Message) (domain.Message, error)
 }
 
@@ -93,15 +95,35 @@ func (s *ChatService) Messages(ctx context.Context, workspaceID, channelID, user
 	if _, err := s.channels.GetVisible(ctx, workspaceID, channelID, userID); err != nil {
 		return nil, err
 	}
-	if limit <= 0 {
-		limit = defaultMessagesPage
-	}
-	limit = min(limit, maxMessagesPage)
-	return s.messages.List(ctx, workspaceID, channelID, beforeID, limit)
+	return s.messages.List(ctx, workspaceID, channelID, beforeID, pageSize(limit))
 }
 
-// PostMessage stores a message and broadcasts it. Posting in a public channel joins it.
-func (s *ChatService) PostMessage(ctx context.Context, workspaceID, channelID, userID int64, body string) (domain.Message, error) {
+// Replies lists a thread. The route has no channel id, so visibility is checked
+// against the root's channel.
+func (s *ChatService) Replies(ctx context.Context, workspaceID, rootID, userID int64, limit int) ([]domain.Message, error) {
+	if err := s.RequireMember(ctx, workspaceID, userID); err != nil {
+		return nil, err
+	}
+	root, err := s.messages.Get(ctx, workspaceID, rootID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.channels.GetVisible(ctx, workspaceID, root.ChannelID, userID); err != nil {
+		return nil, err
+	}
+	return s.messages.ListReplies(ctx, workspaceID, root.ChannelID, rootID, pageSize(limit))
+}
+
+func pageSize(limit int) int {
+	if limit <= 0 {
+		return defaultMessagesPage
+	}
+	return min(limit, maxMessagesPage)
+}
+
+// PostMessage stores a message and broadcasts it; a non-nil threadRootID makes it
+// a reply. Posting in a public channel joins it.
+func (s *ChatService) PostMessage(ctx context.Context, workspaceID, channelID, userID int64, body string, threadRootID *int64) (domain.Message, error) {
 	if err := s.RequireMember(ctx, workspaceID, userID); err != nil {
 		return domain.Message{}, err
 	}
@@ -113,19 +135,40 @@ func (s *ChatService) PostMessage(ctx context.Context, workspaceID, channelID, u
 	if body == "" || utf8.RuneCountInString(body) > maxMessageRunes {
 		return domain.Message{}, fmt.Errorf("%w: message must be 1-%d characters", domain.ErrInvalid, maxMessageRunes)
 	}
+	if threadRootID != nil {
+		if err := s.checkThreadRoot(ctx, workspaceID, ch.ID, *threadRootID); err != nil {
+			return domain.Message{}, err
+		}
+	}
 	if !ch.IsMember {
 		if err := s.channels.AddMember(ctx, ch.ID, userID); err != nil {
 			return domain.Message{}, err
 		}
 	}
 	msg, err := s.messages.Create(ctx, domain.Message{
-		WorkspaceID: workspaceID, ChannelID: ch.ID, UserID: userID, Body: body,
+		WorkspaceID: workspaceID, ChannelID: ch.ID, ThreadRootID: threadRootID, UserID: userID, Body: body,
 	})
 	if err != nil {
 		return domain.Message{}, err
 	}
 	s.pub.Publish(workspaceID, domain.Event{Type: domain.EventMessageCreated, ChannelID: ch.ID, Data: msg})
 	return msg, nil
+}
+
+// checkThreadRoot enforces that replies target a top-level message in the same
+// channel, keeping threads one level deep.
+func (s *ChatService) checkThreadRoot(ctx context.Context, workspaceID, channelID, rootID int64) error {
+	root, err := s.messages.Get(ctx, workspaceID, rootID)
+	if err != nil {
+		return err
+	}
+	if root.ChannelID != channelID {
+		return domain.ErrNotFound
+	}
+	if root.ThreadRootID != nil {
+		return fmt.Errorf("%w: cannot reply to a reply", domain.ErrInvalid)
+	}
+	return nil
 }
 
 var channelNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)

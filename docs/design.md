@@ -124,7 +124,3 @@ Threads with ≥ 5 replies show "Summarize". The thread is sent to
 5. Text search, AI summary.
 6. Embedding worker + semantic search.
 7. Helm on minikube end-to-end, README demo script.
-
-## Layer
-
-- cmd init (cobra) -> services -> repos/infra

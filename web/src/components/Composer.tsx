@@ -3,16 +3,20 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type Channel, type Message } from '../api'
 import { appendMessage } from '../useWorkspaceSocket'
 
-export function Composer({ workspaceId, channel }: { workspaceId: number; channel: Channel }) {
+type Props = { workspaceId: number; channel: Channel; threadRootId?: number }
+
+export function Composer({ workspaceId, channel, threadRootId }: Props) {
   const qc = useQueryClient()
+  const label = threadRootId ? 'Reply…' : `Message #${channel.name}`
   const [text, setText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const send = useMutation({
-    mutationFn: (body: string) => api.postMessage(workspaceId, channel.id, body),
+    mutationFn: (body: string) => api.postMessage(workspaceId, channel.id, body, threadRootId),
     onSuccess: (m) => {
-      qc.setQueryData<Message[]>(['messages', channel.id], (old) => appendMessage(old, m))
+      const key = threadRootId ? ['replies', threadRootId] : ['messages', channel.id]
+      qc.setQueryData<Message[]>(key, (old) => appendMessage(old, m))
       if (!channel.is_member) qc.invalidateQueries({ queryKey: ['channels', workspaceId] })
     },
     onError: (err, body) => {
@@ -57,8 +61,8 @@ export function Composer({ workspaceId, channel }: { workspaceId: number; channe
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={`Message #${channel.name}`}
-          aria-label={`Message #${channel.name}`}
+          placeholder={label}
+          aria-label={label}
           className="block w-full resize-none bg-transparent px-3 pt-3 text-[15px] outline-none placeholder:text-zinc-400"
         />
         <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-1">

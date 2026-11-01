@@ -21,38 +21,73 @@ import (
 
 	searchv1 "github.com/frangte/mnchat/gen/search/v1"
 	"github.com/frangte/mnchat/internal/platform/metrics"
+	"github.com/frangte/mnchat/internal/search/ai"
 	"github.com/frangte/mnchat/internal/search/store"
 )
 
 type fakeStore struct {
-	mu    sync.Mutex
-	calls int
-	limit int
-	text  string
-	hits  []store.MessageHit
-	err   error
-	block chan struct{} // when set, calls wait on it or on ctx
+	mu      sync.Mutex
+	calls   int
+	limit   int
+	text    string
+	hits    []store.MessageHit
+	thread  []store.ThreadMessage
+	vectors []store.ThreadVector
+	err     error
+	block   chan struct{} // when set, calls wait on it or on ctx
+}
+
+func (f *fakeStore) record(limit int, text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.limit, f.text = limit, text
+}
+
+func (f *fakeStore) wait(ctx context.Context) error {
+	if f.block == nil {
+		return nil
+	}
+	select {
+	case <-f.block:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (f *fakeStore) SearchMessages(ctx context.Context, _ int64, _ []int64, text string, limit int) ([]store.MessageHit, error) {
-	f.mu.Lock()
-	f.calls++
-	f.limit, f.text = limit, text
-	f.mu.Unlock()
-	if f.block != nil {
-		select {
-		case <-f.block:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	f.record(limit, text)
+	if err := f.wait(ctx); err != nil {
+		return nil, err
 	}
 	return f.hits, f.err
+}
+
+func (f *fakeStore) ThreadMessages(ctx context.Context, _, _ int64, limit int) ([]store.ThreadMessage, error) {
+	f.record(limit, "")
+	if err := f.wait(ctx); err != nil {
+		return nil, err
+	}
+	return f.thread, f.err
+}
+
+func (f *fakeStore) ThreadVectors(ctx context.Context, _ int64, _ []int64) ([]store.ThreadVector, error) {
+	f.record(0, "")
+	if err := f.wait(ctx); err != nil {
+		return nil, err
+	}
+	return f.vectors, f.err
 }
 
 func (f *fakeStore) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+func newServer(st Store) *Server {
+	return New(st, AI{Summarizer: ai.Fake{}, Embedder: ai.Fake{}, Model: ai.FakeModel})
 }
 
 // startGRPC runs the real server stack over an in-memory listener.
@@ -130,7 +165,7 @@ func TestSearchMessagesValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := &fakeStore{}
-			resp, err := New(fake).SearchMessages(context.Background(), tt.req)
+			resp, err := newServer(fake).SearchMessages(context.Background(), tt.req)
 			if got := status.Code(err); got != tt.wantCode {
 				t.Fatalf("code = %v, want %v (err %v)", got, tt.wantCode, err)
 			}
@@ -159,7 +194,7 @@ func TestSearchMessagesLimit(t *testing.T) {
 	for _, tt := range tests {
 		fake := &fakeStore{}
 		req := &searchv1.SearchMessagesRequest{WorkspaceId: 1, ChannelIds: []int64{1}, Query: "go", Limit: tt.limit}
-		if _, err := New(fake).SearchMessages(context.Background(), req); err != nil {
+		if _, err := newServer(fake).SearchMessages(context.Background(), req); err != nil {
 			t.Fatal(err)
 		}
 		if fake.limit != tt.want {
@@ -172,7 +207,7 @@ func TestSearchMessagesMapsHits(t *testing.T) {
 	fake := &fakeStore{hits: []store.MessageHit{{ID: 9, Score: 1.5}, {ID: 4, Score: 0.5}}}
 	req := &searchv1.SearchMessagesRequest{WorkspaceId: 1, ChannelIds: []int64{1}, Query: "  deploy  "}
 
-	resp, err := New(fake).SearchMessages(context.Background(), req)
+	resp, err := newServer(fake).SearchMessages(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +224,7 @@ func TestStoreErrors(t *testing.T) {
 
 	t.Run("database failure is unavailable and hides the cause", func(t *testing.T) {
 		fake := &fakeStore{err: errors.New("dial tcp 10.0.0.5:3306: secret-host refused")}
-		_, err := New(fake).SearchMessages(context.Background(), req)
+		_, err := newServer(fake).SearchMessages(context.Background(), req)
 		if status.Code(err) != codes.Unavailable {
 			t.Fatalf("err = %v, want UNAVAILABLE", err)
 		}
@@ -199,7 +234,7 @@ func TestStoreErrors(t *testing.T) {
 	})
 
 	t.Run("a hung store stops at the server's own timeout", func(t *testing.T) {
-		srv := New(&fakeStore{block: make(chan struct{})})
+		srv := newServer(&fakeStore{block: make(chan struct{})})
 		srv.messageSearchTimeout = 20 * time.Millisecond
 		_, err := srv.SearchMessages(context.Background(), req)
 		if status.Code(err) != codes.DeadlineExceeded {
@@ -210,7 +245,7 @@ func TestStoreErrors(t *testing.T) {
 	t.Run("a driver error after the deadline still reports the deadline", func(t *testing.T) {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 		defer cancel()
-		_, err := New(&fakeStore{err: errors.New("invalid connection")}).SearchMessages(ctx, req)
+		_, err := newServer(&fakeStore{err: errors.New("invalid connection")}).SearchMessages(ctx, req)
 		if status.Code(err) != codes.DeadlineExceeded {
 			t.Fatalf("err = %v, want DEADLINE_EXCEEDED", err)
 		}
@@ -219,31 +254,16 @@ func TestStoreErrors(t *testing.T) {
 	t.Run("a cancelled caller is not a replica failure", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := New(&fakeStore{err: errors.New("invalid connection")}).SearchMessages(ctx, req)
+		_, err := newServer(&fakeStore{err: errors.New("invalid connection")}).SearchMessages(ctx, req)
 		if status.Code(err) != codes.Canceled {
 			t.Fatalf("err = %v, want CANCELED", err)
 		}
 	})
 }
 
-// T05 replaces these two.
-func TestUnimplementedRPCs(t *testing.T) {
-	conn, _, _ := startGRPC(t, New(&fakeStore{}))
-	client := searchv1.NewSearchServiceClient(conn)
-
-	_, err := client.SearchThreads(context.Background(), &searchv1.SearchThreadsRequest{})
-	if status.Code(err) != codes.Unimplemented {
-		t.Errorf("SearchThreads err = %v, want UNIMPLEMENTED", err)
-	}
-	_, err = client.SummarizeThread(context.Background(), &searchv1.SummarizeThreadRequest{})
-	if status.Code(err) != codes.Unimplemented {
-		t.Errorf("SummarizeThread err = %v, want UNIMPLEMENTED", err)
-	}
-}
-
 func TestInterceptorRecordsContractMetrics(t *testing.T) {
 	fake := &fakeStore{err: errors.New("down")}
-	conn, _, scrape := startGRPC(t, New(fake))
+	conn, _, scrape := startGRPC(t, newServer(fake))
 	client := searchv1.NewSearchServiceClient(conn)
 	ctx := context.Background()
 
@@ -263,7 +283,7 @@ func TestInterceptorRecordsContractMetrics(t *testing.T) {
 	for _, want := range []string{
 		`mnchat_search_grpc_requests_total{code="Unavailable",rpc="SearchMessages"} 1`,
 		`mnchat_search_grpc_requests_total{code="InvalidArgument",rpc="SearchMessages"} 1`,
-		`mnchat_search_grpc_requests_total{code="Unimplemented",rpc="SearchThreads"} 1`,
+		`mnchat_search_grpc_requests_total{code="InvalidArgument",rpc="SearchThreads"} 1`,
 		`mnchat_search_grpc_duration_seconds_count{rpc="SearchMessages"} 2`,
 		`mnchat_search_grpc_duration_seconds_count{rpc="SearchThreads"} 1`,
 	} {
@@ -277,7 +297,7 @@ func TestInterceptorRecordsContractMetrics(t *testing.T) {
 }
 
 func TestHealthReportsServingThenNotServing(t *testing.T) {
-	conn, srv, _ := startGRPC(t, New(&fakeStore{}))
+	conn, srv, _ := startGRPC(t, newServer(&fakeStore{}))
 	client := healthpb.NewHealthClient(conn)
 	name := searchv1.SearchService_ServiceDesc.ServiceName
 
@@ -297,7 +317,7 @@ func TestHealthReportsServingThenNotServing(t *testing.T) {
 
 func TestShutdownWaitsForRunningRequests(t *testing.T) {
 	fake := &fakeStore{block: make(chan struct{})}
-	conn, srv, _ := startGRPC(t, New(fake))
+	conn, srv, _ := startGRPC(t, newServer(fake))
 	client := searchv1.NewSearchServiceClient(conn)
 
 	result := make(chan error, 1)
@@ -328,7 +348,7 @@ func TestShutdownWaitsForRunningRequests(t *testing.T) {
 
 func TestShutdownCancelsRequestsAfterTimeout(t *testing.T) {
 	fake := &fakeStore{block: make(chan struct{})}
-	conn, srv, _ := startGRPC(t, New(fake))
+	conn, srv, _ := startGRPC(t, newServer(fake))
 	client := searchv1.NewSearchServiceClient(conn)
 
 	result := make(chan error, 1)

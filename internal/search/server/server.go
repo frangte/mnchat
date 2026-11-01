@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	searchv1 "github.com/frangte/mnchat/gen/search/v1"
+	"github.com/frangte/mnchat/internal/search/ai"
 	"github.com/frangte/mnchat/internal/search/store"
 )
 
@@ -19,25 +20,50 @@ const (
 	defaultMessageLimit = 20
 	maxMessageLimit     = 50
 
-	// messageSearchTimeout covers callers with no deadline of their own. Chat's
-	// 800 ms deadline is shorter and applies first.
+	defaultThreadLimit = 5
+	maxThreadLimit     = 20
+
+	// These timeouts cover callers with no deadline of their own. Chat's
+	// deadlines, 800 ms, 2 s and 60 s, are shorter or equal and apply first.
 	messageSearchTimeout = 2 * time.Second
+	// threadSearchTimeout leaves room for a cold embedding model, which took up
+	// to 2.2 s to load.
+	threadSearchTimeout = 5 * time.Second
+	summarizeTimeout    = 60 * time.Second
 )
 
 type Store interface {
 	SearchMessages(ctx context.Context, workspaceID int64, channelIDs []int64, text string, limit int) ([]store.MessageHit, error)
+	ThreadMessages(ctx context.Context, workspaceID, rootID int64, limit int) ([]store.ThreadMessage, error)
+	ThreadVectors(ctx context.Context, workspaceID int64, channelIDs []int64) ([]store.ThreadVector, error)
 }
 
-// Server implements searchv1.SearchServiceServer. RPCs it doesn't define yet
-// return UNIMPLEMENTED through the embedded type.
+// AI is the model provider the thread RPCs use.
+type AI struct {
+	Summarizer ai.Summarizer
+	Embedder   ai.Embedder
+	// Model names the summarizer in SummarizeThread responses, such as gemma3:4b.
+	Model string
+}
+
+// Server implements searchv1.SearchServiceServer.
 type Server struct {
 	searchv1.UnimplementedSearchServiceServer
 	store                Store
+	ai                   AI
 	messageSearchTimeout time.Duration
+	threadSearchTimeout  time.Duration
+	summarizeTimeout     time.Duration
 }
 
-func New(s Store) *Server {
-	return &Server{store: s, messageSearchTimeout: messageSearchTimeout}
+func New(s Store, models AI) *Server {
+	return &Server{
+		store:                s,
+		ai:                   models,
+		messageSearchTimeout: messageSearchTimeout,
+		threadSearchTimeout:  threadSearchTimeout,
+		summarizeTimeout:     summarizeTimeout,
+	}
 }
 
 func (s *Server) SearchMessages(ctx context.Context, req *searchv1.SearchMessagesRequest) (*searchv1.SearchMessagesResponse, error) {
@@ -82,10 +108,20 @@ func clampLimit(limit int32, fallback, maxLimit int) int {
 // storeError logs the cause and hides it from callers. An expired or cancelled
 // ctx decides the code, because the driver can report one as a broken connection.
 func storeError(ctx context.Context, rpc string, err error) error {
+	return dependencyError(ctx, rpc, "store", err)
+}
+
+// aiError does the same for a model call. Ollama down, slow, or returning
+// something unusable are all UNAVAILABLE, which chat shows as a 503.
+func aiError(ctx context.Context, rpc string, err error) error {
+	return dependencyError(ctx, rpc, "ai", err)
+}
+
+func dependencyError(ctx context.Context, rpc, dependency string, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		slog.Warn("store call stopped", "rpc", rpc, "err", ctxErr)
+		slog.Warn(dependency+" call stopped", "rpc", rpc, "err", ctxErr)
 		return status.FromContextError(ctxErr).Err()
 	}
-	slog.Error("store call failed", "rpc", rpc, "err", err)
-	return status.Error(codes.Unavailable, "search store unavailable")
+	slog.Error(dependency+" call failed", "rpc", rpc, "err", err)
+	return status.Error(codes.Unavailable, "search "+dependency+" unavailable")
 }

@@ -219,3 +219,45 @@ func closedAddr(t *testing.T) string {
 	}
 	return addr
 }
+
+func TestThreadVectorsBindsEveryPlaceholderInOrder(t *testing.T) {
+	stmt, args := threadVectors(7, []int64{1, 2, 3})
+	if got := strings.Count(stmt, "?"); got != len(args) {
+		t.Fatalf("statement has %d placeholders, %d args", got, len(args))
+	}
+	if want := []any{int64(7), int64(1), int64(2), int64(3)}; !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %v, want %v", args, want)
+	}
+	if !strings.Contains(stmt, "FROM search_threads_v1") || !strings.Contains(stmt, "workspace_id = ? AND channel_id IN (?,?,?)") {
+		t.Fatalf("statement = %s", stmt)
+	}
+}
+
+func TestThreadVectorsSkipsTheDatabaseWithoutChannels(t *testing.T) {
+	db, err := Open(context.Background(), "u:p@tcp("+closedAddr(t)+")/mnchat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, channels := range [][]int64{nil, {}} {
+		got, err := New(db).ThreadVectors(context.Background(), 1, channels)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("ThreadVectors(%v) = %v, %v; want nothing and no error", channels, got, err)
+		}
+	}
+}
+
+func TestThreadReadsReportAnUnreachableReplica(t *testing.T) {
+	db, err := Open(context.Background(), "u:p@tcp("+closedAddr(t)+")/mnchat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := New(db)
+	if _, err := s.ThreadMessages(context.Background(), 1, 1, 200); err == nil {
+		t.Error("ThreadMessages against a closed port returned nil error")
+	}
+	if _, err := s.ThreadVectors(context.Background(), 1, []int64{1}); err == nil {
+		t.Error("ThreadVectors against a closed port returned nil error")
+	}
+}

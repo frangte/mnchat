@@ -44,7 +44,7 @@ func startAgainst(t *testing.T, addr string) searchv1.SearchServiceClient {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	conn, _, _ := startGRPC(t, New(store.New(db)))
+	conn, _, _ := startGRPC(t, newServer(store.New(db)))
 	return searchv1.NewSearchServiceClient(conn)
 }
 
@@ -100,7 +100,7 @@ func TestUnreachableReplica(t *testing.T) {
 		t.Fatalf("startup must survive a dead replica: %v", err)
 	}
 	defer db.Close()
-	conn, _, _ := startGRPC(t, New(store.New(db)))
+	conn, _, _ := startGRPC(t, newServer(store.New(db)))
 	client := searchv1.NewSearchServiceClient(conn)
 	ctx := context.Background()
 

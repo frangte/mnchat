@@ -4,8 +4,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -117,6 +119,118 @@ func messageSearch(workspaceID int64, channelIDs []int64, query string, limit in
 		args = append(args, id)
 	}
 	return stmt, append(args, query, limit)
+}
+
+// ThreadMessage is one message of a thread, with its author's display name.
+type ThreadMessage struct {
+	ID int64
+	// ThreadRootID is 0 for a top-level message.
+	ThreadRootID int64
+	UserName     string
+	Body         string
+}
+
+// ThreadMessages returns the thread under rootID, root first and then its newest
+// replies in ID order, at most limit messages in all. It returns nothing when the
+// root isn't on the replica, because it hasn't replicated yet or was deleted.
+//
+// It reads the root by primary key, then the replies in the root's channel. The
+// single "id = ? OR thread_root_id = ?" query scans every message, since no index
+// starts with thread_root_id, while (channel_id, thread_root_id) is indexed and
+// lets LIMIT stop at the newest replies.
+func (s *Store) ThreadMessages(ctx context.Context, workspaceID, rootID int64, limit int) ([]ThreadMessage, error) {
+	var (
+		root      ThreadMessage
+		channelID int64
+		parent    sql.NullInt64
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, channel_id, thread_root_id, user_name, body
+		FROM search_thread_messages_v1
+		WHERE workspace_id = ? AND id = ?`, workspaceID, rootID,
+	).Scan(&root.ID, &channelID, &parent, &root.UserName, &root.Body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	root.ThreadRootID = parent.Int64
+	// A reply has no replies of its own, and the caller rejects it anyway.
+	if parent.Valid || limit <= 1 {
+		return []ThreadMessage{root}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_name, body
+		FROM search_thread_messages_v1
+		WHERE workspace_id = ? AND channel_id = ? AND thread_root_id = ?
+		ORDER BY id DESC
+		LIMIT ?`, workspaceID, channelID, rootID, limit-1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var replies []ThreadMessage
+	for rows.Next() {
+		m := ThreadMessage{ThreadRootID: rootID}
+		if err := rows.Scan(&m.ID, &m.UserName, &m.Body); err != nil {
+			return nil, err
+		}
+		replies = append(replies, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	slices.Reverse(replies)
+	return append([]ThreadMessage{root}, replies...), nil
+}
+
+// ThreadVector is one summarized thread's embedding as the VECTOR column stores
+// it: 4 bytes per dimension, little-endian float32.
+type ThreadVector struct {
+	ThreadRootID int64
+	Embedding    []byte
+}
+
+// ThreadVectors returns the embedding of every summarized thread in channelIDs.
+// An empty channelIDs returns nothing without a query.
+func (s *Store) ThreadVectors(ctx context.Context, workspaceID int64, channelIDs []int64) ([]ThreadVector, error) {
+	if len(channelIDs) == 0 {
+		return nil, nil
+	}
+	stmt, args := threadVectors(workspaceID, channelIDs)
+	rows, err := s.db.QueryContext(ctx, stmt, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ThreadVector
+	for rows.Next() {
+		var v ThreadVector
+		if err := rows.Scan(&v.ThreadRootID, &v.Embedding); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// threadVectors builds the statement and its arguments. channelIDs must not be empty.
+func threadVectors(workspaceID int64, channelIDs []int64) (string, []any) {
+	stmt := `
+		SELECT thread_root_id, embedding
+		FROM search_threads_v1
+		WHERE workspace_id = ? AND channel_id IN (` + placeholders(len(channelIDs)) + `)`
+
+	args := make([]any, 0, len(channelIDs)+1)
+	args = append(args, workspaceID)
+	for _, id := range channelIDs {
+		args = append(args, id)
+	}
+	return stmt, args
 }
 
 func placeholders(n int) string {

@@ -1,4 +1,7 @@
-.PHONY: db replica-status api search web test proto down reset-db
+.PHONY: db replica-status api search models web test proto down reset-db
+
+OLLAMA_CHAT_MODEL ?= gemma3:4b
+OLLAMA_EMBED_MODEL ?= bge-m3
 
 db: ## start MySQL primary and read-only replica in docker
 	docker-compose up -d mysql mysql-replica
@@ -12,6 +15,10 @@ api: ## run the Go API locally (applies migrations + demo seed)
 
 search: ## run the search service locally (gRPC :9190, metrics :9191)
 	go run ./cmd/mnchat-search
+
+models: ## pull the Ollama models search uses (about 4.6 GB on disk)
+	ollama pull $(OLLAMA_CHAT_MODEL)
+	ollama pull $(OLLAMA_EMBED_MODEL)
 
 web: ## run the React dev server on :5173
 	cd web && npm install && npm run dev

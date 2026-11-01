@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package search.v1;
+
+option go_package = "github.com/frangte/mnchat/gen/search/v1;searchv1";
+
+// SearchService is the boundary between chat and search. Chat owns permissions,
+// so callers pass the channels the user may read, and search returns IDs that
+// chat loads from the primary.
+service SearchService {
+  // SearchMessages runs full-text search over messages.
+  rpc SearchMessages(SearchMessagesRequest) returns (SearchMessagesResponse);
+  // SearchThreads ranks summarized threads by meaning.
+  rpc SearchThreads(SearchThreadsRequest) returns (SearchThreadsResponse);
+  // SummarizeThread summarizes a thread and embeds the summary. It writes
+  // nothing: chat stores the result on the primary.
+  rpc SummarizeThread(SummarizeThreadRequest) returns (SummarizeThreadResponse);
+}
+
+message SearchMessagesRequest {
+  int64 workspace_id = 1;
+  // Readable channels. An empty list returns no hits, never all channels.
+  repeated int64 channel_ids = 2;
+  string query = 3;
+  int32 limit = 4;
+}
+
+message MessageHit {
+  int64 message_id = 1;
+  double score = 2;
+}
+
+message SearchMessagesResponse {
+  repeated MessageHit hits = 1;
+}
+
+message SearchThreadsRequest {
+  int64 workspace_id = 1;
+  // Readable channels. An empty list returns no hits, never all channels.
+  repeated int64 channel_ids = 2;
+  string query = 3;
+  int32 limit = 4;
+}
+
+message ThreadHit {
+  int64 thread_root_id = 1;
+  double score = 2;
+}
+
+message SearchThreadsResponse {
+  repeated ThreadHit hits = 1;
+}
+
+message SummarizeThreadRequest {
+  int64 workspace_id = 1;
+  int64 thread_root_id = 2;
+}
+
+message SummarizeThreadResponse {
+  string summary = 1;
+  // 1024 dimensions, embedded from the summary.
+  repeated float embedding = 2;
+  // Newest message the summary covers. Can trail the primary if the replica lags.
+  int64 last_msg_id = 3;
+  string model = 4;
+}

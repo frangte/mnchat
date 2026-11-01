@@ -11,6 +11,7 @@ var (
 	ErrInvalid      = errors.New("invalid input")
 	ErrConflict     = errors.New("conflict")
 	ErrUnauthorized = errors.New("unauthorized")
+	ErrUnavailable  = errors.New("unavailable")
 )
 
 type User struct {
@@ -66,4 +67,6 @@ type Event struct {
 	Type      string `json:"type"`
 	ChannelID int64  `json:"channel_id"`
 	Data      any    `json:"data"`
+	// Audience limits delivery to these users. Nil means the whole workspace.
+	Audience []int64 `json:"-"`
 }

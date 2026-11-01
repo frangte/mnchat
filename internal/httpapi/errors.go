@@ -36,6 +36,8 @@ func writeError(c *gin.Context, err error) {
 		abortError(c, http.StatusConflict, "conflict", detail(err, domain.ErrConflict))
 	case errors.Is(err, domain.ErrUnauthorized):
 		abortError(c, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
+	case errors.Is(err, domain.ErrUnavailable):
+		abortError(c, http.StatusServiceUnavailable, "unavailable", detail(err, domain.ErrUnavailable))
 	default:
 		slog.Error("request failed", "path", c.FullPath(), "err", err)
 		abortError(c, http.StatusInternalServerError, "internal", "internal server error")

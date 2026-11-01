@@ -26,7 +26,10 @@ const (
 	// shutdownTimeout stays under the 10 s that `docker stop` waits before SIGKILL.
 	shutdownTimeout = 8 * time.Second
 
-	warmUpTimeout = 30 * time.Second
+	// The warm-up retries, because Ollama may start after search, or stall for a while.
+	warmUpTimeout  = 30 * time.Second
+	warmUpRetry    = 10 * time.Second
+	warmUpAttempts = 30
 )
 
 func main() {
@@ -112,15 +115,31 @@ func newAI(cfg config.Config, reg prometheus.Registerer) (server.AI, *ai.Ollama,
 
 // warmEmbedModel loads the embedding model in the background. A cold load took
 // 1.1-2.2 s, about chat's 2 s SearchThreads deadline, so the first semantic search
-// after a restart would fail. Serving never waits for this, and a failure is only
-// logged: Ollama may simply not be running yet.
+// after a restart would fail. Serving never waits for this. A failure is retried
+// every warmUpRetry for about 5 minutes, because Ollama may not be running yet, and
+// one attempt was seen to stall for its whole 30 s.
 func warmEmbedModel(ctx context.Context, o *ai.Ollama) {
+	for attempt := 1; attempt <= warmUpAttempts; attempt++ {
+		start := time.Now()
+		err := warmOnce(ctx, o)
+		if err == nil {
+			slog.Info("embedding model warm", "took", time.Since(start).Round(time.Millisecond), "attempt", attempt)
+			return
+		}
+		if attempt == 1 {
+			slog.Warn("embedding model warm-up failed, retrying in the background", "err", err, "every", warmUpRetry)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(warmUpRetry):
+		}
+	}
+	slog.Warn("embedding model warm-up gave up, the first semantic search may be slow", "attempts", warmUpAttempts)
+}
+
+func warmOnce(ctx context.Context, o *ai.Ollama) error {
 	ctx, cancel := context.WithTimeout(ctx, warmUpTimeout)
 	defer cancel()
-	start := time.Now()
-	if err := o.WarmUp(ctx); err != nil {
-		slog.Warn("embedding model warm-up failed, the first semantic search may be slow", "err", err)
-		return
-	}
-	slog.Info("embedding model warm", "took", time.Since(start).Round(time.Millisecond))
+	return o.WarmUp(ctx)
 }

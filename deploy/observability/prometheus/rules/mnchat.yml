@@ -1,0 +1,84 @@
+# MNChat alert rules. Metric names are a contract, see docs/tasks/CONTRACTS.md.
+#
+# "Chat" means every route except the search features (text and thread search, summaries)
+# and the WebSocket upgrade. A search outage must never look like a chat failure, since chat
+# keeps working through one.
+groups:
+  - name: mnchat-chat
+    rules:
+      - alert: ChatHighErrorRate
+        expr: |
+          sum(rate(mnchat_http_requests_total{status=~"5..", route!~"/api/v1/ws|.*/search|.*/summary"}[1m]))
+            /
+          sum(rate(mnchat_http_requests_total{route!~"/api/v1/ws|.*/search|.*/summary"}[1m]))
+            > 0.01
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Chat is returning server errors
+          description: '{{ $value | humanizePercentage }} of chat requests failed with a 5xx over the last minute.'
+
+      - alert: ChatHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(mnchat_http_request_duration_seconds_bucket{route!~".*/search|.*/summary"}[1m]))
+          ) > 0.3
+        for: 5m
+        labels:
+          severity: warn
+        annotations:
+          summary: Chat is slow
+          description: 'Chat p95 latency is {{ $value | humanizeDuration }}, over 300 ms.'
+
+  - name: mnchat-search
+    rules:
+      - alert: SearchServiceDown
+        expr: up{job="search"} == 0
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: The search service is down
+          description: Prometheus can't scrape search. Chat keeps working, and search returns 503.
+
+      # During a long outage the breaker half-opens every 10 s, and one scrape reading 1 would
+      # reset the timer of a plain "== 2", so max_over_time keeps it held. The second clause asks
+      # for recent calls: a breaker only leaves open on a call, so with no search traffic the
+      # gauge stays at 2 after search is back, and that isn't worth an alert.
+      - alert: SearchBreakerOpen
+        expr: |
+          max_over_time(mnchat_search_breaker_state[1m]) == 2
+            and on (rpc)
+          sum by (rpc) (increase(mnchat_search_client_requests_total[1m])) > 0
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: 'Chat stopped calling search for {{ $labels.rpc }}'
+          description: The circuit breaker is open, so calls fail in milliseconds instead of waiting for a timeout.
+
+  - name: mnchat-replication
+    rules:
+      - alert: ReplicaLagHigh
+        expr: mysql_slave_status_seconds_behind_source > 30
+        for: 2m
+        labels:
+          severity: warn
+        annotations:
+          summary: The search replica is behind
+          description: 'The replica is {{ $value }} s behind the primary, so new messages take that long to become searchable.'
+
+      # A dead replica exports no replication series at all, so reachability counts as well.
+      - alert: ReplicationStopped
+        expr: |
+          mysql_slave_status_replica_io_running == 0
+            or mysql_slave_status_replica_sql_running == 0
+            or mysql_up{role="replica"} == 0
+            or up{job="mysql", role="replica"} == 0
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: Replication to the search replica stopped
+          description: New messages won't reach search until replication runs again. Chat writes are unaffected.

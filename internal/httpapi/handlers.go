@@ -15,6 +15,7 @@ const (
 	ctxUserID = "userID"
 
 	searchModeMessages = "messages"
+	searchModeThreads  = "threads"
 )
 
 func (h *Handler) requireAuth(c *gin.Context) {
@@ -184,16 +185,62 @@ func (h *Handler) searchWorkspace(c *gin.Context) {
 	if !ok {
 		return
 	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
 	switch c.Query("mode") {
 	case "", searchModeMessages:
-		limit, _ := strconv.Atoi(c.Query("limit"))
 		items, err := h.search.Messages(c.Request.Context(), wsID, userID(c), c.Query("q"), limit)
 		if err != nil {
 			writeError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"mode": searchModeMessages, "items": items})
+	case searchModeThreads:
+		items, err := h.search.Threads(c.Request.Context(), wsID, userID(c), c.Query("q"), limit)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"mode": searchModeThreads, "items": items})
 	default:
-		writeError(c, fmt.Errorf("%w: mode must be %s", domain.ErrInvalid, searchModeMessages))
+		writeError(c, fmt.Errorf("%w: mode must be %s or %s", domain.ErrInvalid, searchModeMessages, searchModeThreads))
 	}
+}
+
+// getSummary answers 200 with null when the thread has no summary yet. That is a
+// normal state, so browsers shouldn't log an error for every thread opened. 404 still
+// means the thread is missing or hidden.
+func (h *Handler) getSummary(c *gin.Context) {
+	wsID, ok := idParam(c, "wsID")
+	if !ok {
+		return
+	}
+	msgID, ok := idParam(c, "msgID")
+	if !ok {
+		return
+	}
+	summary, err := h.summaries.Summary(c.Request.Context(), wsID, msgID, userID(c))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, summary) // a nil *ThreadSummary encodes as null
+}
+
+// postSummary passes c.Request.Context(), like searchWorkspace, so a closed tab stops
+// the summary call.
+func (h *Handler) postSummary(c *gin.Context) {
+	wsID, ok := idParam(c, "wsID")
+	if !ok {
+		return
+	}
+	msgID, ok := idParam(c, "msgID")
+	if !ok {
+		return
+	}
+	summary, err := h.summaries.Summarize(c.Request.Context(), wsID, msgID, userID(c))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, summary)
 }

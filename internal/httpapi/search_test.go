@@ -76,14 +76,54 @@ func (stubMessages) GetMany(_ context.Context, workspaceID int64, ids []int64) (
 	return out, nil
 }
 
+// LatestReplyIDs gives message 2 a reply newer than its summary.
+func (stubMessages) LatestReplyIDs(_ context.Context, _ int64, rootIDs []int64) (map[int64]int64, error) {
+	latest := map[int64]int64{1: 11, 2: 22, 3: 33, 6: 66, 8: 88}
+	out := map[int64]int64{}
+	for _, id := range rootIDs {
+		out[id] = latest[id]
+	}
+	return out, nil
+}
+
+// stubSummaries has a summary for every message, including the ones the caller
+// can't read, so only chat's checks keep them out.
+type stubSummaries struct{}
+
+func (stubSummaries) GetMany(_ context.Context, workspaceID int64, rootIDs []int64) ([]domain.ThreadSummary, error) {
+	all := []domain.ThreadSummary{
+		{ThreadRootID: 1, WorkspaceID: 1, Summary: "summary one", LastMsgID: 11},
+		{ThreadRootID: 2, WorkspaceID: 1, Summary: "summary two", LastMsgID: 20},
+		{ThreadRootID: 3, WorkspaceID: 1, Summary: "summary three", LastMsgID: 33},
+		{ThreadRootID: 6, WorkspaceID: 1, Summary: "private summary", LastMsgID: 66},
+		{ThreadRootID: 8, WorkspaceID: 2, Summary: "other workspace summary", LastMsgID: 88},
+	}
+	out := []domain.ThreadSummary{}
+	for _, s := range all {
+		if s.WorkspaceID == workspaceID && slices.Contains(rootIDs, s.ThreadRootID) {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
 // fakeServer is a real gRPC server. Like a compromised search, it returns whatever
 // IDs the test gives it, ignoring the request's channels.
 type fakeServer struct {
 	searchv1.UnimplementedSearchServiceServer
-	hits   []*searchv1.MessageHit
-	hold   func(context.Context) // runs inside the handler, if set
-	calls  atomic.Int64
-	limits chan int32
+	hits       []*searchv1.MessageHit
+	threadHits []*searchv1.ThreadHit
+	hold       func(context.Context) // runs inside the handler, if set
+	calls      atomic.Int64
+	limits     chan int32
+}
+
+func (f *fakeServer) SearchThreads(_ context.Context, req *searchv1.SearchThreadsRequest) (*searchv1.SearchThreadsResponse, error) {
+	f.calls.Add(1)
+	if f.limits != nil {
+		f.limits <- req.GetLimit()
+	}
+	return &searchv1.SearchThreadsResponse{Hits: f.threadHits}, nil
 }
 
 func (f *fakeServer) SearchMessages(ctx context.Context, req *searchv1.SearchMessagesRequest) (*searchv1.SearchMessagesResponse, error) {
@@ -97,7 +137,7 @@ func (f *fakeServer) SearchMessages(ctx context.Context, req *searchv1.SearchMes
 	return &searchv1.SearchMessagesResponse{Hits: f.hits}, nil
 }
 
-func startFakeServer(t *testing.T, f *fakeServer) string {
+func startFakeServer(t *testing.T, f searchv1.SearchServiceServer) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -133,8 +173,8 @@ func newSearchRouter(t *testing.T, addr string) http.Handler {
 	t.Cleanup(func() { client.Close() })
 	return NewRouter(
 		service.NewAuthService(stubUsers{}, "test-secret"), nil,
-		service.NewSearchService(stubWorkspaces{}, stubChannels{}, stubMessages{}, client),
-		nil, &fakePinger{}, m, metrics.Handler(reg), nil,
+		service.NewSearchService(stubWorkspaces{}, stubChannels{}, stubMessages{}, stubSummaries{}, client),
+		nil, nil, &fakePinger{}, m, metrics.Handler(reg), nil,
 	)
 }
 
@@ -239,7 +279,10 @@ func TestSearchRequests(t *testing.T) {
 		{name: "malformed workspace", user: reader, target: "/api/v1/workspaces/abc/search?q=x", wantStatus: 404, wantCode: "not_found"},
 		{name: "q too long", user: reader, target: "/api/v1/workspaces/1/search?q=" + long, wantStatus: 400, wantCode: "invalid"},
 		{name: "q missing", user: reader, target: "/api/v1/workspaces/1/search", wantStatus: 400, wantCode: "invalid"},
-		{name: "threads waits for T07", user: reader, target: "/api/v1/workspaces/1/search?q=x&mode=threads", wantStatus: 400, wantCode: "invalid"},
+		{name: "threads by name", user: reader, target: "/api/v1/workspaces/1/search?q=x&mode=threads", wantStatus: 200, wantCalls: 1},
+		{name: "threads q too long", user: reader, target: "/api/v1/workspaces/1/search?mode=threads&q=" + long, wantStatus: 400, wantCode: "invalid"},
+		{name: "threads non-member", user: outsider, target: "/api/v1/workspaces/1/search?q=x&mode=threads", wantStatus: 404, wantCode: "not_found"},
+		{name: "threads with no readable channels", user: noChannels, target: "/api/v1/workspaces/1/search?q=x&mode=threads", wantStatus: 200},
 		{name: "unknown mode", user: reader, target: "/api/v1/workspaces/1/search?q=x&mode=nope", wantStatus: 400, wantCode: "invalid"},
 		{name: "no readable channels", user: noChannels, target: "/api/v1/workspaces/1/search?q=x", wantStatus: 200},
 	}
@@ -295,6 +338,92 @@ func TestSearchEmptyResultsAreAnArray(t *testing.T) {
 
 			if want := `{"items":[],"mode":"messages"}`; w.Body.String() != want {
 				t.Fatalf("body = %s, want %s", w.Body, want)
+			}
+		})
+	}
+}
+
+func TestSearchThreadsDropsWhatTheCallerCantRead(t *testing.T) {
+	f := &fakeServer{threadHits: []*searchv1.ThreadHit{
+		{ThreadRootId: 3, Score: 0.9},
+		{ThreadRootId: 6, Score: 0.8}, // private channel
+		{ThreadRootId: 2, Score: 0.7},
+		{ThreadRootId: 8, Score: 0.6}, // another workspace
+		{ThreadRootId: 99, Score: 0.5},
+	}}
+	r := newSearchRouter(t, startFakeServer(t, f))
+
+	w := getAs(t, r, reader, "/api/v1/workspaces/1/search?q=why+did+the+website+go+down&mode=threads")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", w.Code, w.Body)
+	}
+	var body struct {
+		Mode  string           `json:"mode"`
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode %q: %v", w.Body, err)
+	}
+	if body.Mode != "threads" || len(body.Items) != 2 {
+		t.Fatalf("body = %s, want mode threads with 2 items", w.Body)
+	}
+	for i, want := range []struct {
+		id      float64
+		summary string
+		stale   bool
+		score   float64
+	}{
+		{3, "summary three", false, 0.9},
+		{2, "summary two", true, 0.7}, // reply 22 is newer than the summary's 20
+	} {
+		item := body.Items[i]
+		if len(item) != 4 {
+			t.Fatalf("item %d has keys %v, want root, summary, stale and score", i, item)
+		}
+		root, _ := item["root"].(map[string]any)
+		if root["id"] != want.id || item["summary"] != want.summary || item["stale"] != want.stale || item["score"] != want.score {
+			t.Fatalf("item %d = %v, want %+v", i, item, want)
+		}
+	}
+	for _, leaked := range []string{"private", "other workspace"} {
+		if strings.Contains(w.Body.String(), leaked) {
+			t.Fatalf("response leaks %q: %s", leaked, w.Body)
+		}
+	}
+}
+
+func TestSearchThreadsEmptyResultsAreAnArray(t *testing.T) {
+	for _, user := range []int64{reader, noChannels} {
+		r := newSearchRouter(t, startFakeServer(t, &fakeServer{threadHits: []*searchv1.ThreadHit{{ThreadRootId: 6}}}))
+
+		w := getAs(t, r, user, "/api/v1/workspaces/1/search?q=x&mode=threads")
+
+		if want := `{"items":[],"mode":"threads"}`; w.Body.String() != want {
+			t.Fatalf("user %d: body = %s, want %s", user, w.Body, want)
+		}
+	}
+}
+
+func TestSearchThreadsLimitParam(t *testing.T) {
+	tests := []struct {
+		query string
+		want  int32
+	}{
+		{"", 5},
+		{"&limit=7", 7},
+		{"&limit=500", 20},
+		{"&limit=abc", 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			f := &fakeServer{limits: make(chan int32, 1)}
+			r := newSearchRouter(t, startFakeServer(t, f))
+
+			getAs(t, r, reader, "/api/v1/workspaces/1/search?mode=threads&q=x"+tt.query)
+
+			if got := <-f.limits; got != tt.want {
+				t.Fatalf("limit = %d, want %d", got, tt.want)
 			}
 		})
 	}

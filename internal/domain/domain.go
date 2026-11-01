@@ -57,6 +57,23 @@ type Message struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// EmbeddingDims is the size of a summary embedding: bge-m3's output, and the
+// thread_summaries.embedding VECTOR(1024) column.
+const EmbeddingDims = 1024
+
+// ThreadSummary is an AI summary of a thread. Only the fields with JSON names reach
+// clients; the IDs locate the row, and the embedding never leaves the repo.
+type ThreadSummary struct {
+	ThreadRootID int64     `json:"-"`
+	WorkspaceID  int64     `json:"-"`
+	ChannelID    int64     `json:"-"`
+	Summary      string    `json:"summary"`
+	LastMsgID    int64     `json:"last_msg_id"` // newest reply the summary covers
+	Model        string    `json:"model"`
+	Stale        bool      `json:"stale"` // a reply newer than LastMsgID exists on the primary
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 const (
 	EventMessageCreated = "message.created"
 	EventChannelCreated = "channel.created"

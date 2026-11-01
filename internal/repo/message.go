@@ -63,12 +63,7 @@ func (r *MessageRepo) GetMany(ctx context.Context, workspaceID int64, ids []int6
 	if len(ids) == 0 {
 		return []domain.Message{}, nil // IN () is a syntax error
 	}
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, workspaceID)
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args, placeholders := inArgs(workspaceID, ids)
 	rows, err := r.db.QueryContext(ctx, messageColumns+`
 		WHERE m.workspace_id = ? AND m.id IN (`+placeholders+`) AND m.deleted_at IS NULL
 		ORDER BY m.id DESC`, args...)
@@ -76,6 +71,52 @@ func (r *MessageRepo) GetMany(ctx context.Context, workspaceID int64, ids []int6
 		return nil, err
 	}
 	return collectNewestFirst(rows)
+}
+
+// LatestReplyID returns the id of the newest live reply to rootID, or 0 if it has none.
+func (r *MessageRepo) LatestReplyID(ctx context.Context, workspaceID, rootID int64) (int64, error) {
+	latest, err := r.LatestReplyIDs(ctx, workspaceID, []int64{rootID})
+	return latest[rootID], err
+}
+
+// LatestReplyIDs is LatestReplyID for many roots in one grouped query. Roots without
+// a live reply, or in another workspace, are missing from the map. Joining through
+// the root lets the reply lookup use idx_messages_channel.
+func (r *MessageRepo) LatestReplyIDs(ctx context.Context, workspaceID int64, rootIDs []int64) (map[int64]int64, error) {
+	out := make(map[int64]int64, len(rootIDs))
+	if len(rootIDs) == 0 {
+		return out, nil
+	}
+	args, placeholders := inArgs(workspaceID, rootIDs)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT root.id, MAX(m.id)
+		FROM messages root
+		JOIN messages m ON m.channel_id = root.channel_id AND m.thread_root_id = root.id
+		WHERE root.workspace_id = ? AND root.id IN (`+placeholders+`) AND m.deleted_at IS NULL
+		GROUP BY root.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rootID, latest int64
+		if err := rows.Scan(&rootID, &latest); err != nil {
+			return nil, err
+		}
+		out[rootID] = latest
+	}
+	return out, rows.Err()
+}
+
+// inArgs returns the arguments and placeholders for "WHERE x = ? AND y IN (...)".
+func inArgs(first int64, ids []int64) ([]any, string) {
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, first)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	return args, strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 }
 
 // Create inserts the message and, for a reply, bumps its root's reply_count.

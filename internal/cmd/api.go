@@ -56,11 +56,13 @@ func newAPICmd() *cobra.Command {
 				return err
 			}
 			defer searchClient.Close()
-			searchSvc := service.NewSearchService(workspaces, channels, messages, searchClient)
+			summaries := repo.NewSummaryRepo(db)
+			searchSvc := service.NewSearchService(workspaces, channels, messages, summaries, searchClient)
+			summarySvc := service.NewSummaryService(workspaces, channels, messages, summaries, searchClient)
 
 			srv := &http.Server{
 				Addr:              cfg.HTTPAddr,
-				Handler:           httpapi.NewRouter(authSvc, chatSvc, searchSvc, hub, db, apiMetrics, metrics.Handler(reg), cfg.WSOrigins),
+				Handler:           httpapi.NewRouter(authSvc, chatSvc, searchSvc, summarySvc, hub, db, apiMetrics, metrics.Handler(reg), cfg.WSOrigins),
 				ReadHeaderTimeout: 5 * time.Second,
 			}
 			go func() {

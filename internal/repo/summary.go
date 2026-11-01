@@ -3,17 +3,25 @@ package repo
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
-	"strconv"
 
 	"github.com/frangte/mnchat/internal/domain"
 )
 
+// querier is what SummaryRepo needs from *sql.DB. A *sql.Tx has it too, so a test can
+// run the real queries inside a transaction and roll it back.
+type querier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // SummaryRepo stores thread summaries on the primary. api is the only writer of
 // thread_summaries, so the replica stays read-only and gets the rows by replication.
-type SummaryRepo struct{ db *sql.DB }
+type SummaryRepo struct{ db querier }
 
 func NewSummaryRepo(db *sql.DB) *SummaryRepo { return &SummaryRepo{db: db} }
 
@@ -63,13 +71,13 @@ func (r *SummaryRepo) GetMany(ctx context.Context, workspaceID int64, rootIDs []
 // order, and the slower one may have read an older replica. Assignments run left to
 // right, so last_msg_id has to come last.
 func (r *SummaryRepo) Upsert(ctx context.Context, s domain.ThreadSummary, embedding []float32) error {
-	vector, err := vectorLiteral(embedding)
+	vector, err := vectorBytes(embedding)
 	if err != nil {
 		return err
 	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO thread_summaries (thread_root_id, workspace_id, channel_id, last_msg_id, summary, model, embedding)
-		VALUES (?, ?, ?, ?, ?, ?, STRING_TO_VECTOR(?)) AS new
+		VALUES (?, ?, ?, ?, ?, ?, ?) AS new
 		ON DUPLICATE KEY UPDATE
 			summary     = IF(new.last_msg_id >= thread_summaries.last_msg_id, new.summary, thread_summaries.summary),
 			model       = IF(new.last_msg_id >= thread_summaries.last_msg_id, new.model, thread_summaries.model),
@@ -79,24 +87,21 @@ func (r *SummaryRepo) Upsert(ctx context.Context, s domain.ThreadSummary, embedd
 	return err
 }
 
-// vectorLiteral formats v for STRING_TO_VECTOR as "[0.1,0.2]". Precision -1 with
-// bitSize 32 is the shortest text that parses back to the same float32.
-func vectorLiteral(v []float32) (string, error) {
+// vectorBytes encodes v as a VECTOR column stores it: 4 bytes a value, float32
+// little-endian. It's bound as is, not through STRING_TO_VECTOR, which rejects
+// subnormal floats (error 6138) that a real embedding can contain.
+func vectorBytes(v []float32) ([]byte, error) {
 	if len(v) != domain.EmbeddingDims {
-		return "", fmt.Errorf("embedding has %d dimensions, want %d", len(v), domain.EmbeddingDims)
+		return nil, fmt.Errorf("embedding has %d dimensions, want %d", len(v), domain.EmbeddingDims)
 	}
-	b := make([]byte, 0, len(v)*12)
-	b = append(b, '[')
+	b := make([]byte, 4*len(v))
 	for i, f := range v {
 		if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
-			return "", fmt.Errorf("embedding value %d is %v", i, f)
+			return nil, fmt.Errorf("embedding value %d is %v", i, f)
 		}
-		if i > 0 {
-			b = append(b, ',')
-		}
-		b = strconv.AppendFloat(b, float64(f), 'g', -1, 32)
+		binary.LittleEndian.PutUint32(b[i*4:], math.Float32bits(f))
 	}
-	return string(append(b, ']')), nil
+	return b, nil
 }
 
 func scanSummary(s scanner) (domain.ThreadSummary, error) {

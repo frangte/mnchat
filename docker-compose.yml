@@ -1,6 +1,7 @@
 services:
   mysql:
     image: mysql:9
+    command: --server-id=1 --gtid-mode=ON --enforce-gtid-consistency=ON --innodb-ft-min-token-size=2
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: mnchat
@@ -10,11 +11,32 @@ services:
       - "3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./deploy/mysql/primary-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
       interval: 5s
       timeout: 3s
       retries: 30
+
+  # Read-only copy for search. Database and users arrive through replication.
+  mysql-replica:
+    image: mysql:9
+    command: --server-id=2 --gtid-mode=ON --enforce-gtid-consistency=ON --innodb-ft-min-token-size=2
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-replica-data:/var/lib/mysql
+      - ./deploy/mysql/replica-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      mysql:
+        condition: service_healthy
 
   api:
     build: .
@@ -29,3 +51,4 @@ services:
 
 volumes:
   mysql-data:
+  mysql-replica-data:

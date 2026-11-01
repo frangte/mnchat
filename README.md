@@ -20,10 +20,13 @@ Design: [docs/design.md](docs/design.md)
 ## Run locally
 
 ```bash
-make db    # MySQL 9 in docker (docker-compose)
+make db    # MySQL 9 primary and read-only replica in docker (docker-compose)
 make api   # Go API on :8080 — applies migrations + demo seed on startup
 make web   # React dev server on http://localhost:5173
 ```
+
+The replica needs a clean start, so if you ran the project before replication was added,
+run `make reset-db` once. `make replica-status` shows replication health.
 
 Demo login: pick any seeded user (no password). Open a second tab as another user to see
 messages arrive live. Carol belongs to both orgs (Acme, Globex) and can switch workspaces;

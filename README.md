@@ -16,32 +16,44 @@ Contracts: [docs/tasks/CONTRACTS.md](docs/tasks/CONTRACTS.md) · Test results:
 
 ## Architecture
 
-```
-  Browser · React (Vite :5173)
-        │ HTTP /api/v1 + WebSocket
-        ▼
-  ┌──────────────── api :8080 (Go) ────────────────┐
-  │ auth · channels · messages · WebSocket hub     │
-  │ permissions: works out which channels you read │
-  │ summaries: stores them, the only DB writer     │
-  │ search client: timeout + circuit breaker       │
-  └──────┬───────────────────────────────┬─────────┘
-         │ SQL read/write                │ gRPC, connects lazily
-         ▼                               ▼  800 ms / 2 s / 60 s
-  MySQL primary :3306            search :9190 (Go), metrics :9191
-         │ async replication             │ read-only, through views only
-         ▼                               │
-  MySQL replica :3307 ◄──────────────────┤
-                                         │ HTTP
-                                         ▼
-                              Ollama on the Mac :11434
-                              gemma3:4b writes summaries
-                              bge-m3 turns text into vectors
+```mermaid
+flowchart TB
+    browser["Browser<br/>React UI, Vite :5173"]
 
-  Prometheus :9090 collects metrics every 5 s from api, search, and an exporter
-  on each MySQL server (including replica lag). Grafana :3000 shows them.
-  Chat and search don't depend on either, so stopping them changes nothing.
+    subgraph chatSide["Chat: must keep working"]
+        api["api :8080, Go<br/>auth · channels · messages · WebSocket hub<br/>permissions: which channels you can read<br/>summaries: stores them, the only DB writer<br/>search client: deadline + circuit breaker per call"]
+        primary[("MySQL primary :3306")]
+    end
+
+    subgraph searchSide["Search: allowed to fail"]
+        search["search :9190, Go, gRPC<br/>text search · ranking by meaning"]
+        replica[("MySQL replica :3307<br/>read-only")]
+        ollama["Ollama on the Mac :11434<br/>gemma3:4b writes summaries<br/>bge-m3 turns text into vectors"]
+    end
+
+    subgraph monitoring["Monitoring: chat and search don't depend on it"]
+        exporters["mysqld-exporter × 2<br/>one per MySQL server, includes replica lag"]
+        prom["Prometheus :9090<br/>collects every 5 s, 6 alert rules"]
+        grafana["Grafana :3000<br/>2 dashboards"]
+    end
+
+    browser -->|"HTTP /api/v1 + WebSocket"| api
+    api -->|"SQL read/write"| primary
+    primary -.->|"async replication"| replica
+    api -->|"gRPC, connects lazily<br/>deadlines 800 ms / 2 s / 60 s"| search
+    search -->|"SELECT on 3 search_*_v1 views"| replica
+    search -->|"HTTP"| ollama
+
+    primary -.- exporters
+    replica -.- exporters
+    exporters -.- prom
+    api -.-|"/metrics"| prom
+    search -.-|"metrics :9191"| prom
+    prom --> grafana
 ```
+
+Solid arrows are requests. Dotted lines are replication and metrics collection. Stopping anything in
+the Search or Monitoring boxes leaves chat working.
 
 What keeps chat safe from search:
 
@@ -171,3 +183,57 @@ in `#general`), team lunch in `#random`, and a confidential Support restructurin
 - Run `make reset-db`, then `make up`, for clean seed data.
 - Run one search in the Threads tab so the embedding model is loaded.
 - Read each summary once, since a small local model can get details wrong.
+
+## Kubernetes with k3s (planned)
+
+> **Not built yet.** The repo has no Kubernetes manifests, so `make up`, with Docker Compose, is
+> how to run MNChat today. This section is the plan for `deploy/k8s/`.
+
+**Where k3s runs.** k3s runs only on Linux, so on a Mac it runs inside a VM. Colima, which
+already runs Docker for Compose, has k3s built in, so there's no second VM, and images built with
+`docker build` stay in the same VM. Turning it on restarts the Colima VM once, which stops every
+running container, including other projects'. To avoid the restart, k3d runs k3s inside Docker
+instead, but images then have to be copied in with `k3d image import`. minikube would run a
+second Docker inside Colima, which costs the most disk and adds a network hop on the way to
+Ollama.
+
+**How Compose maps to Kubernetes**, all in namespace `mnchat`:
+
+| Compose service | Kubernetes | Notes |
+|---|---|---|
+| `mysql`, `mysql-replica` | A StatefulSet each, with a persistent volume, and Services with the same names | The replica's init script connects to `SOURCE_HOST='mysql'`, so the names must match. The init SQL in `deploy/mysql/` becomes ConfigMaps |
+| `api` | Deployment and Service on 8080, with `JWT_SECRET` in a Secret | Readiness probe on `/api/v1/readyz`, which checks only the primary. **One replica**, see the limits below |
+| `search` | Deployment and Service on 9190 and 9191 | Stateless, so it can run several replicas. Reaches Ollama on the Mac through `hostAliases`: `host.docker.internal` at `192.168.5.2`, the address the Compose containers use |
+| Exporters, Prometheus, Grafana | Deployments and Services, with `deploy/observability/` as ConfigMaps | `prometheus.yml` works unchanged, because the Service names match the Compose names |
+| The UI | Unchanged: `make web` on the Mac | Vite's `/api` proxy targets `localhost:8080`, which a port-forward serves |
+
+**Running it**, once `deploy/k8s/` exists:
+
+```bash
+colima stop && colima start --kubernetes --cpu 4 --memory 8   # once: restarts the VM, stops every container
+kubectl config use-context colima
+docker build -t mnchat-api:dev . && docker build -t mnchat-search:dev -f Dockerfile.search .
+kubectl apply -k deploy/k8s                       # kustomize is built into kubectl
+kubectl -n mnchat wait --for=condition=available deploy --all --timeout=180s
+kubectl -n mnchat port-forward svc/api 8080:8080 &
+kubectl -n mnchat port-forward svc/grafana 3000:3000 &
+make web
+```
+
+Colima disables Traefik by default, so there's no ingress, and port-forwarding stands in for it.
+To remove everything, run `kubectl delete -k deploy/k8s`. `colima kubernetes stop` stops k3s and
+leaves Docker running.
+
+**Limits to fix before running more than one `api` pod:**
+- **WebSocket fan-out is in memory.** The hub in `internal/realtime/hub.go` only reaches browsers
+  connected to the same pod, so with two `api` pods, half the users would miss live messages.
+  Scaling chat needs a shared pub/sub such as Redis or NATS. `search` can scale today.
+- **Migrations run when `api` starts.** Several pods starting at once would race, so migrations
+  would move to a Job or an init container.
+- **`make chaos-search` speaks Compose.** On Kubernetes, stopping search becomes
+  `kubectl -n mnchat scale deploy/search --replicas=0`, and killing the replica becomes
+  `kubectl -n mnchat delete pod mysql-replica-0`, after which the StatefulSet brings it back by itself.
+
+**To verify first:** that pods reach Ollama at `192.168.5.2`, which works from Compose
+containers, and that Colima's k3s runs locally built images without a registry, using
+`imagePullPolicy: Never`.

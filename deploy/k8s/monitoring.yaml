@@ -1,0 +1,222 @@
+# Monitoring: two MySQL exporters, Prometheus and Grafana, with the same config files as
+# Compose. Nothing in chat or search depends on these, so stopping them changes nothing.
+# prometheus.yml scrapes api:8080, search:9191 and the exporters by their Compose names,
+# which are the Service names here, so it works unchanged.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysqld-exporter
+  labels: {app: mysqld-exporter}
+spec:
+  selector: {app: mysqld-exporter}
+  ports:
+    - name: metrics
+      port: 9104
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysqld-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mysqld-exporter}
+  template:
+    metadata:
+      labels: {app: mysqld-exporter}
+    spec:
+      containers:
+        - name: exporter
+          image: prom/mysqld-exporter:v0.20.0
+          imagePullPolicy: IfNotPresent
+          args: [--mysqld.address=mysql:3306, --mysqld.username=exporter]
+          env:
+            - name: MYSQLD_EXPORTER_PASSWORD
+              valueFrom: {secretKeyRef: {name: mnchat-dev, key: MYSQLD_EXPORTER_PASSWORD}}
+          ports:
+            - name: metrics
+              containerPort: 9104
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysqld-exporter-replica
+  labels: {app: mysqld-exporter-replica}
+spec:
+  selector: {app: mysqld-exporter-replica}
+  ports:
+    - name: metrics
+      port: 9104
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysqld-exporter-replica
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mysqld-exporter-replica}
+  template:
+    metadata:
+      labels: {app: mysqld-exporter-replica}
+    spec:
+      containers:
+        - name: exporter
+          image: prom/mysqld-exporter:v0.20.0
+          imagePullPolicy: IfNotPresent
+          args: [--mysqld.address=mysql-replica:3306, --mysqld.username=exporter, --collect.slave_status]
+          env:
+            - name: MYSQLD_EXPORTER_PASSWORD
+              valueFrom: {secretKeyRef: {name: mnchat-dev, key: MYSQLD_EXPORTER_PASSWORD}}
+          ports:
+            - name: metrics
+              containerPort: 9104
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  labels: {app: prometheus}
+spec:
+  selector: {app: prometheus}
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  # One Prometheus at a time, so a rollout never evaluates the alert rules twice.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: prometheus}
+  template:
+    metadata:
+      labels: {app: prometheus}
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.15.0
+          imagePullPolicy: IfNotPresent
+          # The config lives in its own folder, because a ConfigMap mount is read-only and
+          # rules/ has to be a second mount. prometheus.yml loads /etc/prometheus/rules/*.yml.
+          args:
+            - --config.file=/etc/prometheus/config/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=7d
+            - --storage.tsdb.retention.size=1GB
+            - --web.enable-lifecycle
+          ports:
+            - name: http
+              containerPort: 9090
+          readinessProbe:
+            httpGet: {path: /-/ready, port: http}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/config
+              readOnly: true
+            - name: rules
+              mountPath: /etc/prometheus/rules
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-rules
+        # Metrics history is lost when the pod restarts. That's fine for a demo.
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels: {app: grafana}
+spec:
+  selector: {app: grafana}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: grafana}
+  template:
+    metadata:
+      labels: {app: grafana}
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.4.13
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: "false"
+            - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+              value: "false"
+            - name: GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES
+              value: "false"
+            - name: GF_NEWS_NEWS_FEED_ENABLED
+              value: "false"
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: /etc/grafana/dashboards/chat-overview.json
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet: {path: /api/health, port: http}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+              readOnly: true
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+              readOnly: true
+            - name: dashboards
+              mountPath: /etc/grafana/dashboards
+              readOnly: true
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards

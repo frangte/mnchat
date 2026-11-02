@@ -1,0 +1,82 @@
+# MySQL primary: chat's database, and the only one anything writes to.
+#
+# Services keep the Compose names, because the replica's init script, every DSN and
+# prometheus.yml use them. Every Service in deploy/k8s/ has a ClusterIP, not clusterIP: None,
+# so its name resolves as soon as the Service exists, even with no pod ready. A name that
+# fails inside the cluster falls through to the Mac's DNS search domains, and one of them
+# answered host.docker.internal.medium.com with a public address, so a failed lookup could
+# send a MySQL login to the internet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  labels: {app: mysql}
+spec:
+  selector: {app: mysql}
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels: {app: mysql}
+  template:
+    metadata:
+      labels: {app: mysql}
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:9
+          imagePullPolicy: IfNotPresent
+          args:
+            - --server-id=1
+            - --gtid-mode=ON
+            - --enforce-gtid-consistency=ON
+            - --innodb-ft-min-token-size=2
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom: {secretKeyRef: {name: mnchat-dev, key: MYSQL_ROOT_PASSWORD}}
+            - name: MYSQL_DATABASE
+              value: mnchat
+            - name: MYSQL_USER
+              value: mnchat
+            - name: MYSQL_PASSWORD
+              valueFrom: {secretKeyRef: {name: mnchat-dev, key: MYSQL_PASSWORD}}
+          ports:
+            - name: mysql
+              containerPort: 3306
+          # TCP to 127.0.0.1, like the Compose healthcheck. The first-start init runs with
+          # networking off, so this stays unready until the init scripts have finished.
+          readinessProbe:
+            exec:
+              command: [sh, -c, 'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent']
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests: {cpu: 100m, memory: 512Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: init
+          configMap:
+            name: mysql-primary-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 2Gi

@@ -101,6 +101,7 @@ temporarily unavailable. Chat still works."
 | `internal/infra/mysqldb/migrations` | Schema and demo seed, applied when `api` starts |
 | `deploy/mysql` | Replication config and init scripts |
 | `deploy/observability` | Prometheus config and Grafana provisioning |
+| `deploy/kustomization.yaml`, `deploy/k8s` | The same stack on local k3s, see [Kubernetes with k3s](#kubernetes-with-k3s) |
 | `web/` | React UI: chat, thread panel with [Summary], search panel with Messages and Threads tabs |
 | `docs/tasks/` | Task board, contracts, test results, one file per task |
 
@@ -184,56 +185,75 @@ in `#general`), team lunch in `#random`, and a confidential Support restructurin
 - Run one search in the Threads tab so the embedding model is loaded.
 - Read each summary once, since a small local model can get details wrong.
 
-## Kubernetes with k3s (planned)
+## Kubernetes with k3s
 
-> **Not built yet.** The repo has no Kubernetes manifests, so `make up`, with Docker Compose, is
-> how to run MNChat today. This section is the plan for `deploy/k8s/`.
+Compose, with `make up`, stays the main way to run MNChat. The same stack also runs on the k3s
+that Colima has built in, from plain manifests in `deploy/k8s/`.
 
-**Where k3s runs.** k3s runs only on Linux, so on a Mac it runs inside a VM. Colima, which
-already runs Docker for Compose, has k3s built in, so there's no second VM, and images built with
-`docker build` stay in the same VM. Turning it on restarts the Colima VM once, which stops every
-running container, including other projects'. To avoid the restart, k3d runs k3s inside Docker
-instead, but images then have to be copied in with `k3d image import`. minikube would run a
-second Docker inside Colima, which costs the most disk and adds a network hop on the way to
-Ollama.
+**Once:** `colima stop && colima start --kubernetes --cpu 4 --memory 8`. This restarts the Colima VM,
+which stops every running container, including other projects'. Then:
+
+```bash
+make k8s-up        # builds the images, applies deploy/, waits until everything is ready
+make k8s-forward   # api :8080, Grafana :3000, Prometheus :9090 on localhost. Ctrl-C stops
+make web           # in another terminal, as with Compose
+```
+
+| Command | Does |
+|---|---|
+| `make k8s-up` | Builds `mnchat-api:dev` and `mnchat-search:dev` into Colima's Docker, which k3s uses directly, so there's no registry. Applies `deploy/` with `kubectl apply -k`, restarts `api` and `search` to run the new images, and waits until every pod is ready |
+| `make k8s-forward` | Port-forwards to the same localhost ports Compose uses. It exits when a pod restarts, so run it again then |
+| `make k8s-status` | Pods, Services and volumes |
+| `make k8s-down` | Deletes namespace `mnchat`, databases included. The next `make k8s-up` seeds again |
+
+- Every target passes `--context colima`, so nothing can reach another cluster in your kubeconfig.
+  Set `KUBE_CONTEXT=` to change it.
+- Run Compose or k3s, not both, because they use the same localhost ports.
+- By hand it's `kubectl apply -k deploy`, not `deploy/k8s`. `kustomization.yaml` sits in `deploy/`,
+  because kustomize only reads files in or below its own folder, and the MySQL init scripts and
+  monitoring configs are shared with Compose rather than copied.
 
 **How Compose maps to Kubernetes**, all in namespace `mnchat`:
 
 | Compose service | Kubernetes | Notes |
 |---|---|---|
-| `mysql`, `mysql-replica` | A StatefulSet each, with a persistent volume, and Services with the same names | The replica's init script connects to `SOURCE_HOST='mysql'`, so the names must match. The init SQL in `deploy/mysql/` becomes ConfigMaps |
-| `api` | Deployment and Service on 8080, with `JWT_SECRET` in a Secret | Readiness probe on `/api/v1/readyz`, which checks only the primary. **One replica**, see the limits below |
-| `search` | Deployment and Service on 9190 and 9191 | Stateless, so it can run several replicas. Reaches Ollama on the Mac through `hostAliases`: `host.docker.internal` at `192.168.5.2`, the address the Compose containers use |
-| Exporters, Prometheus, Grafana | Deployments and Services, with `deploy/observability/` as ConfigMaps | `prometheus.yml` works unchanged, because the Service names match the Compose names |
-| The UI | Unchanged: `make web` on the Mac | Vite's `/api` proxy targets `localhost:8080`, which a port-forward serves |
+| `mysql`, `mysql-replica` | A StatefulSet each, with a 2 GiB volume, and Services with the same names | The init SQL in `deploy/mysql/` becomes ConfigMaps. The replica waits for the primary in an init container, like Compose's `depends_on` |
+| `api` | Deployment, 1 pod, `Recreate` | Waits for the primary. Readiness on `/api/v1/readyz`, which checks only the primary, and liveness on `/api/v1/healthz` |
+| `search` | Deployment | No wait: it starts with the replica down and returns 503 until it's back. Reaches Ollama on the Mac at `192.168.5.2` through `hostAliases` |
+| Exporters, Prometheus, Grafana | Deployments | `deploy/observability/` becomes ConfigMaps, and `prometheus.yml` works unchanged. Prometheus and Grafana keep no data across restarts |
+| Passwords | One Secret, `mnchat-dev`, generated by kustomize | The same dev passwords as `docker-compose.yml`. Never apply it to a shared cluster |
+| The UI | Unchanged: `make web` on the Mac | Vite's `/api` proxy targets `localhost:8080`, which `make k8s-forward` serves |
 
-**Running it**, once `deploy/k8s/` exists:
+**Two differences from Compose:**
+- **No headless Services.** Pods inherit the Mac's DNS search domains, and on this Mac one of them
+  resolved `host.docker.internal.medium.com` to a public address. So a name that fails inside the
+  cluster could send a connection, a MySQL login included, to the internet. A ClusterIP name resolves
+  as soon as its Service exists, so that can't happen, and `search` gets `host.docker.internal` from
+  `hostAliases`, not DNS.
+- **A stopped search fails faster.** With no pods, the Service refuses connections at once, so search
+  returns 503 in about 6 ms from the first call, instead of after the 800 ms deadline.
 
-```bash
-colima stop && colima start --kubernetes --cpu 4 --memory 8   # once: restarts the VM, stops every container
-kubectl config use-context colima
-docker build -t mnchat-api:dev . && docker build -t mnchat-search:dev -f Dockerfile.search .
-kubectl apply -k deploy/k8s                       # kustomize is built into kubectl
-kubectl -n mnchat wait --for=condition=available deploy --all --timeout=180s
-kubectl -n mnchat port-forward svc/api 8080:8080 &
-kubectl -n mnchat port-forward svc/grafana 3000:3000 &
-make web
-```
+**Tested on 2026-11-02** with k3s v1.33.3 in Colima, through `make k8s-forward`, as the UI calls it:
+- Login, posting, a summary from Ollama, and text and thread search all worked, and Carol never got
+  the `#leadership` thread.
+- With `search` scaled to 0 and then the replica pod deleted, all 40 chat posts returned 201, the
+  slowest in 14 ms. Search returned 503 in about 6 ms.
+- Search answered again 11 s after scaling back to 1, and the messages sent during the outage were
+  searchable.
+- The pods use about 1.5 GB of memory.
 
-Colima disables Traefik by default, so there's no ingress, and port-forwarding stands in for it.
-To remove everything, run `kubectl delete -k deploy/k8s`. `colima kubernetes stop` stops k3s and
-leaves Docker running.
-
-**Limits to fix before running more than one `api` pod:**
+**Limits before running more than one `api` pod:**
 - **WebSocket fan-out is in memory.** The hub in `internal/realtime/hub.go` only reaches browsers
   connected to the same pod, so with two `api` pods, half the users would miss live messages.
-  Scaling chat needs a shared pub/sub such as Redis or NATS. `search` can scale today.
+  Scaling chat needs a shared pub/sub such as Redis or NATS.
 - **Migrations run when `api` starts.** Several pods starting at once would race, so migrations
-  would move to a Job or an init container.
-- **`make chaos-search` speaks Compose.** On Kubernetes, stopping search becomes
-  `kubectl -n mnchat scale deploy/search --replicas=0`, and killing the replica becomes
+  would move to a Job.
+- **`search` can scale, but gRPC sticks to one pod.** `api` holds one gRPC connection, and a ClusterIP
+  Service balances connections, not calls. Spreading calls needs a headless Service with client-side
+  `round_robin`, or a service mesh.
+- **`make chaos-search` speaks Compose.** On Kubernetes, stopping search is
+  `kubectl -n mnchat scale deploy/search --replicas=0`, and killing the replica is
   `kubectl -n mnchat delete pod mysql-replica-0`, after which the StatefulSet brings it back by itself.
 
-**To verify first:** that pods reach Ollama at `192.168.5.2`, which works from Compose
-containers, and that Colima's k3s runs locally built images without a registry, using
-`imagePullPolicy: Never`.
+To remove everything, run `make k8s-down`. `colima kubernetes stop` stops k3s and leaves Docker
+running.

@@ -293,3 +293,26 @@ During the first three chaos runs, `search`'s startup warm-up timed out after it
 time, and one later embed took 2–3 s. Reproducing the same restarts afterwards, plain or with
 the replica killed, warmed in 52–60 ms. The cause isn't confirmed. Ollama stalling while the Mac
 was idle would fit. The warm-up now retries every 10 s for 5 minutes.
+
+## Kubernetes on Colima k3s (T15)
+
+Run on 2026-11-02 with k3s v1.33.3 in Colima 0.8.2, Docker runtime, through `make k8s-up` and
+`make k8s-forward`. One laptop, one run of each check.
+
+| Check | Result |
+|---|---|
+| Pod reaching Ollama on the Mac at `192.168.5.2:11434` | Works, `{"version":"0.35.0"}` |
+| Image built with `docker build`, run with `imagePullPolicy: Never` | Works, because k3s uses Colima's Docker. No registry |
+| `host.docker.internal` from a pod with no `hostAliases` | **Resolved to a public address**, `162.159.152.4`, through the Mac's search domain `medium.com`. Pods inherit the Mac's search domains with `ndots:5` |
+| Fresh `make k8s-up` | All 8 pods ready, 0 restarts. Replica `IO` and `SQL` both `Yes`, 0 s behind, `super_read_only = 1` |
+| `search` starting before the replica | Logged "replica unreachable at startup, serving anyway", then warmed the embedding model in 43 ms |
+| Through the port-forward | Login, posting (201), a summary in 10 s, `rollback` 1 text hit, `rolled back` 0 text hits and the outage thread first by meaning (0.45), a new message searchable through the replica, Carol's thread search only in `#general` |
+| Prometheus and Grafana | 4 targets up, 6 rules loaded, both dashboards provisioned from ConfigMaps |
+| `search` scaled to 0 | 20 chat posts all 201, slowest 14 ms. `readyz` 200. Search 503 in 5–7 ms **from the first call**, because a Service with no pods refuses the connection at once |
+| Replica pod deleted as well | 20 chat posts all 201, slowest 12 ms |
+| `search` scaled back to 1 | Search 200 after 11 s. All 20 messages sent while the replica was down were searchable |
+| Memory per pod | MySQL 540 MiB and 497 MiB, Grafana 312 MiB, Prometheus 103 MiB, api 34 MiB, the rest under 20 MiB |
+| Two `make k8s-forward` at once | The second exits at once with "port is taken" and stops its other forwards, as designed |
+
+The 10 s summary is slower than the Compose runs (1.1–3.3 s warm). `gemma3:4b` had likely been
+unloaded after 30 idle minutes, so this was a cold load. Not measured again.

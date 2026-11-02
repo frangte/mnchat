@@ -1,0 +1,63 @@
+# Search service: gRPC on 9190, metrics on 9191. It reads the replica through views and
+# calls Ollama on the Mac. It starts in any order: an unreachable replica is only logged,
+# so there is no wait for the replica here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: search
+  labels: {app: search}
+spec:
+  selector: {app: search}
+  ports:
+    - name: grpc
+      port: 9190
+      targetPort: grpc
+    - name: metrics
+      port: 9191
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search
+spec:
+  # Stateless, so this can go above 1. With a ClusterIP Service, api's single gRPC
+  # connection still sticks to one pod. Spreading calls needs a headless Service and
+  # client-side round_robin.
+  replicas: 1
+  selector:
+    matchLabels: {app: search}
+  template:
+    metadata:
+      labels: {app: search}
+    spec:
+      # Ollama runs natively on the Mac. 192.168.5.2 is Colima's address for the Mac, the
+      # same one Compose's host-gateway gives. Without this entry the name goes to DNS,
+      # where the Mac's search domains turned it into a public address.
+      hostAliases:
+        - ip: 192.168.5.2
+          hostnames: [host.docker.internal]
+      containers:
+        - name: search
+          image: mnchat-search:dev
+          imagePullPolicy: Never
+          env:
+            - name: SEARCH_MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: mnchat-dev, key: SEARCH_MYSQL_DSN}}
+            - name: OLLAMA_URL
+              value: http://host.docker.internal:11434
+          ports:
+            - name: grpc
+              containerPort: 9190
+            - name: metrics
+              containerPort: 9191
+          readinessProbe:
+            tcpSocket: {port: grpc}
+            periodSeconds: 5
+          # /healthz means only that the process runs. It never checks the replica or Ollama.
+          livenessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}

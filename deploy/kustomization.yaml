@@ -1,0 +1,46 @@
+# MNChat on local Kubernetes (Colima's k3s). Run `make k8s-up`, or `kubectl apply -k deploy`.
+#
+# This file sits in deploy/, not deploy/k8s/, because kustomize only reads files in or below
+# its own folder, and the MySQL init scripts and monitoring configs are shared with Compose.
+# The manifests themselves are in deploy/k8s/.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mnchat
+
+resources:
+  - k8s/namespace.yaml
+  - k8s/mysql.yaml
+  - k8s/mysql-replica.yaml
+  - k8s/api.yaml
+  - k8s/search.yaml
+  - k8s/monitoring.yaml
+
+configMapGenerator:
+  - name: mysql-primary-init
+    files: [mysql/primary-init/01-users.sql]
+  - name: mysql-replica-init
+    files: [mysql/replica-init/01-replica.sql]
+  - name: prometheus-config
+    files: [observability/prometheus/prometheus.yml]
+  - name: prometheus-rules
+    files: [observability/prometheus/rules/mnchat.yml]
+  - name: grafana-datasources
+    files: [observability/grafana/provisioning/datasources/prometheus.yml]
+  - name: grafana-dashboard-provider
+    files: [observability/grafana/provisioning/dashboards/dashboards.yml]
+  - name: grafana-dashboards
+    files:
+      - observability/grafana/dashboards/chat-overview.json
+      - observability/grafana/dashboards/search-pipeline.json
+
+secretGenerator:
+  # Local dev values, the same ones docker-compose.yml uses. Never apply this to a shared cluster.
+  - name: mnchat-dev
+    literals:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_PASSWORD=mnchat
+      - MYSQL_DSN=mnchat:mnchat@tcp(mysql:3306)/mnchat?parseTime=true&loc=UTC
+      - SEARCH_MYSQL_DSN=search_reader:search_reader@tcp(mysql-replica:3306)/mnchat?parseTime=true&loc=UTC
+      - JWT_SECRET=dev-secret-change-me
+      - MYSQLD_EXPORTER_PASSWORD=exporter

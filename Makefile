@@ -1,4 +1,5 @@
-.PHONY: up db replica-status api search models web test load chaos-search proto down reset-db
+.PHONY: up db replica-status api search models web test load chaos-search proto down reset-db \
+	k8s-up k8s-forward k8s-status k8s-down
 
 OLLAMA_CHAT_MODEL ?= gemma3:4b
 OLLAMA_EMBED_MODEL ?= bge-m3
@@ -49,3 +50,28 @@ down: ## stop every container, keeping the data
 
 reset-db: ## wipe MySQL data (re-seeds on next `make api`)
 	docker-compose down -v
+
+# Local Kubernetes in Colima's k3s (colima start --kubernetes). Every kubectl call names the
+# context, so nothing here can reach another cluster in your kubeconfig.
+KUBE_CONTEXT ?= colima
+KUBECTL = kubectl --context $(KUBE_CONTEXT)
+
+k8s-up: ## build images and deploy to local k3s; then make k8s-forward and make web
+	docker build -t mnchat-api:dev .
+	docker build -t mnchat-search:dev -f Dockerfile.search .
+	$(KUBECTL) apply -k deploy
+	@# The tags stay :dev, so restart api and search to run the images just built.
+	$(KUBECTL) -n mnchat rollout restart deploy/api deploy/search
+	$(KUBECTL) -n mnchat rollout status statefulset/mysql --timeout=300s
+	$(KUBECTL) -n mnchat rollout status statefulset/mysql-replica --timeout=300s
+	$(KUBECTL) -n mnchat wait --for=condition=available deploy --all --timeout=300s
+	@echo "Up. Next: make k8s-forward, then make web"
+
+k8s-forward: ## forward api :8080, Grafana :3000, Prometheus :9090 to localhost; Ctrl-C stops
+	KUBE_CONTEXT=$(KUBE_CONTEXT) ./scripts/k8s-forward.sh
+
+k8s-status: ## pods, services and volumes in namespace mnchat
+	$(KUBECTL) -n mnchat get pods,svc,pvc
+
+k8s-down: ## delete namespace mnchat and everything in it, databases included
+	$(KUBECTL) delete -k deploy --ignore-not-found

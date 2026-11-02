@@ -1,0 +1,60 @@
+# Chat API: REST, WebSocket, permissions, and the only writer to the primary.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels: {app: api}
+spec:
+  selector: {app: api}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  # One pod only. The WebSocket hub is in memory, so a second pod would miss half the
+  # live updates, and migrations run at startup, so two pods would race on them.
+  # Recreate stops the old pod before starting the new one, so a rollout never runs two.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: api}
+  template:
+    metadata:
+      labels: {app: api}
+    spec:
+      initContainers:
+        - name: wait-for-mysql
+          image: mysql:9
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, 'until mysqladmin ping -h mysql --connect-timeout=2 --silent; do echo waiting for mysql; sleep 2; done']
+      containers:
+        - name: api
+          image: mnchat-api:dev
+          # Built by `make k8s-up` into Colima's Docker, which k3s uses directly. No registry.
+          imagePullPolicy: Never
+          env:
+            - name: MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: mnchat-dev, key: MYSQL_DSN}}
+            - name: JWT_SECRET
+              valueFrom: {secretKeyRef: {name: mnchat-dev, key: JWT_SECRET}}
+            - name: SEARCH_GRPC_ADDR
+              value: search:9190
+          ports:
+            - name: http
+              containerPort: 8080
+          # readyz checks only the primary, so search being down never takes api out of service.
+          readinessProbe:
+            httpGet: {path: /api/v1/readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /api/v1/healthz, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}

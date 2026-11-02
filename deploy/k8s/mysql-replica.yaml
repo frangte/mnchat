@@ -1,0 +1,75 @@
+# MySQL replica: a read-only, asynchronous copy for search. The database and its users
+# arrive through replication, so MYSQL_DATABASE and MYSQL_USER stay unset, as in Compose.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-replica
+  labels: {app: mysql-replica}
+spec:
+  selector: {app: mysql-replica}
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql-replica
+spec:
+  serviceName: mysql-replica
+  replicas: 1
+  selector:
+    matchLabels: {app: mysql-replica}
+  template:
+    metadata:
+      labels: {app: mysql-replica}
+    spec:
+      initContainers:
+        # Compose's depends_on. mysqladmin ping exits 0 once the server answers, even
+        # with "access denied", so it needs no password.
+        - name: wait-for-primary
+          image: mysql:9
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, 'until mysqladmin ping -h mysql --connect-timeout=2 --silent; do echo waiting for mysql; sleep 2; done']
+      containers:
+        - name: mysql
+          image: mysql:9
+          imagePullPolicy: IfNotPresent
+          args:
+            - --server-id=2
+            - --gtid-mode=ON
+            - --enforce-gtid-consistency=ON
+            - --innodb-ft-min-token-size=2
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom: {secretKeyRef: {name: mnchat-dev, key: MYSQL_ROOT_PASSWORD}}
+          ports:
+            - name: mysql
+              containerPort: 3306
+          readinessProbe:
+            exec:
+              command: [sh, -c, 'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent']
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests: {cpu: 100m, memory: 512Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: init
+          configMap:
+            name: mysql-replica-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 2Gi

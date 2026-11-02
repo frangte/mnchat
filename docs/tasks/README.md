@@ -41,6 +41,7 @@ Status values: `todo`, `in-progress`, `blocked`, `done`.
 | [T12](T12-dashboards-alerts.md) | Grafana dashboards and alert rules | M | blocked: owner checks the dashboards on screen | T01, T04, T05, T10 |
 | [T13](T13-chaos-load.md) | k6 load test and `make chaos-search` | M | blocked: owner watches Grafana during one run | T04, T06, T10 |
 | [T14](T14-docs-demo-script.md) | Update docs, write ADRs and the demo script | S | todo | everything |
+| [T15](T15-k3s.md) | Run the stack on local k3s with kustomize | M | done | T10, T12 |
 
 ## Suggested order
 
@@ -84,7 +85,7 @@ These came from the owner on 2026-11-01. Don't reopen them without asking.
 | Language | **English only for now.** No language detection, no `ngram`, no Japanese or Vietnamese tuning. |
 | UI | Keep the current UI. The only additions are the search input and panel and the Summary button and card. |
 | Local data | `make reset-db` may wipe the local DB, which holds seed data only. The owner approved this. |
-| Deploy | Compose only. Helm and minikube are out of scope. |
+| Deploy | Compose is the main path. Local k3s through kustomize was added on 2026-11-02, after the owner turned on Colima's Kubernetes and ran `kubectl apply -k` (T15). Helm and minikube are still out of scope. |
 | Mock interview | Questions an ANDPAD interviewer would ask, with answer notes based on this project. |
 | No summary yet | `GET .../summary` returns `200` with a `null` body, not `404`, so the browser logs no error per thread opened. `404` stays for a hidden or missing root. |
 

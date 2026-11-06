@@ -1,5 +1,5 @@
 .PHONY: up db replica-status api search models web test load chaos-search proto down reset-db \
-	k8s-up k8s-forward k8s-status k8s-down
+	k8s-up k8s-forward k8s-status k8s-down k8s-reset
 
 OLLAMA_CHAT_MODEL ?= gemma3:4b
 OLLAMA_EMBED_MODEL ?= bge-m3
@@ -73,5 +73,13 @@ k8s-forward: ## forward api :8080, Grafana :3000, Prometheus :9090 to localhost;
 k8s-status: ## pods, services and volumes in namespace mnchat
 	$(KUBECTL) -n mnchat get pods,svc,pvc
 
-k8s-down: ## delete namespace mnchat and everything in it, databases included
+k8s-down: ## stop every pod in k3s, keeping the data, like make down; make k8s-up starts them again
+	@# Apps first, then the replica, then the primary, so nothing loses its database mid-request.
+	$(KUBECTL) -n mnchat scale deploy --all --replicas=0
+	$(KUBECTL) -n mnchat scale statefulset/mysql-replica --replicas=0
+	$(KUBECTL) -n mnchat scale statefulset/mysql --replicas=0
+	$(KUBECTL) -n mnchat wait --for=delete pod --all --timeout=120s
+	@echo "Stopped. The MySQL volumes are kept: make k8s-up starts everything again"
+
+k8s-reset: ## delete namespace mnchat and everything in it, databases included, like make reset-db
 	$(KUBECTL) delete -k deploy --ignore-not-found
